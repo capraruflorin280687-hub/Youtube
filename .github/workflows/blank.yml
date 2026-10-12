@@ -3,22 +3,38 @@ name: Build YouTube Wrapper APK
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
 
 permissions:
   contents: read
 
 jobs:
   build-android:
-    name: Build release APK
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
+    timeout-minutes: 35
     steps:
-      - name: Checkout source
+      - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Locate Flutter project
+        id: project
+        shell: bash
+        run: |
+          PROJECT_FILE="$(find . -type f -name pubspec.yaml -not -path './.git/*' -not -path './build/*' | head -n 1)"
+          if [ -z "$PROJECT_FILE" ]; then
+            echo "::error::Nu am găsit pubspec.yaml. Încarcă proiectul Flutter complet (pubspec.yaml și folderul lib/) în repository."
+            echo "Conținutul rădăcinii repository-ului:"
+            ls -la
+            exit 1
+          fi
+          PROJECT_DIR="$(dirname "$PROJECT_FILE")"
+          if [ ! -f "$PROJECT_DIR/lib/main.dart" ]; then
+            echo "::error::Am găsit pubspec.yaml în $PROJECT_DIR, dar lipsește lib/main.dart."
+            ls -la "$PROJECT_DIR"
+            exit 1
+          fi
+          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          echo "Flutter project found in: $PROJECT_DIR"
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -32,37 +48,30 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Check Flutter project
-        run: |
-          if [ ! -f pubspec.yaml ]; then
-            echo "ERROR: pubspec.yaml not found. Upload the Flutter project files to the repository root."
-            exit 1
-          fi
-          if [ ! -f lib/main.dart ]; then
-            echo "ERROR: lib/main.dart not found."
-            exit 1
-          fi
-
       - name: Create Android platform files if needed
+        working-directory: ${{ steps.project.outputs.dir }}
         run: |
           if [ ! -f android/gradlew ]; then
             flutter create . --platforms=android
           fi
 
-      - name: Install Flutter dependencies
+      - name: Install dependencies
+        working-directory: ${{ steps.project.outputs.dir }}
         run: flutter pub get
 
       - name: Analyze Dart code
+        working-directory: ${{ steps.project.outputs.dir }}
         run: flutter analyze
         continue-on-error: true
 
       - name: Build release APK
+        working-directory: ${{ steps.project.outputs.dir }}
         run: flutter build apk --release
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: youtube-wrapper-release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: ${{ steps.project.outputs.dir }}/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
