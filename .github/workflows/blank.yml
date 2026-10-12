@@ -203,7 +203,7 @@ jobs:
                           customCallback = callback
                           webView.visibility = View.GONE
                           root.addView(view)
-                          setImmersive(true)
+                          setFullscreenMode(true)
                       }
 
                       override fun onHideCustomView() {
@@ -212,7 +212,7 @@ jobs:
                           customCallback?.onCustomViewHidden()
                           customCallback = null
                           webView.visibility = View.VISIBLE
-                          setImmersive(false)
+                          setFullscreenMode(false)
                       }
                   }
 
@@ -233,7 +233,7 @@ jobs:
                   }
               }
 
-              private fun setImmersive(enable: Boolean) {
+              private fun setFullscreenMode(enable: Boolean) {
                   WindowCompat.setDecorFitsSystemWindows(window, !enable)
                   val controller = WindowInsetsControllerCompat(window, window.decorView)
                   if (enable) {
