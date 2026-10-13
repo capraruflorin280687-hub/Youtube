@@ -88,6 +88,20 @@ jobs:
           print("Bara de chip-uri eliminata")
           PY
 
+      - name: Scoate sectiunea de comentarii
+        run: |
+          python3 - <<'PY'
+          import re
+          p = 'lib/features/watch/watch_details.dart'
+          s = open(p).read()
+          new = re.sub(
+              r"\n\s*SliverToBoxAdapter\(\n\s*child: _CommentsTeaser\(videoId: video\.id, onTap: \(\) => onSheet\(WatchSheet\.comments\)\),\n\s*\),",
+              "", s, count=1)
+          assert new != s, "Nu am gasit sectiunea de comentarii"
+          open(p, 'w').write(new)
+          print("Comentarii eliminate")
+          PY
+
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
