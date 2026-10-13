@@ -1,83 +1,577 @@
-name: Build debug APK
-
+name: Build YouPipe personalizat
 on:
-  workflow_dispatch:
-    inputs:
-      publish_release:
-        description: "Publish the universal APK as the 'v-debug' pre-release"
-        type: boolean
-        default: true
   push:
-    branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "website/**"
-      - "**.md"
-
-permissions:
-  contents: write
-
-concurrency:
-  group: build-debug-${{ github.ref }}
-  cancel-in-progress: true
-
+  workflow_dispatch:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    env:
-      NDK_VERSION: 21.0.6113669
     steps:
-      - name: Check out (with submodules)
-        uses: actions/checkout@v4
+      - name: Descarca codul sursa YouPipe
+        uses: actions/checkout@v7
         with:
-          submodules: recursive
+          repository: SanuSanal/YouPipe
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
+      - name: Sterge textul YouPipe din antet
+        run: |
+          python3 - <<'PY'
+          import re
+          p = 'lib/ui/widgets/common.dart'
+          s = open(p).read()
+          new = re.sub(
+              r"\n\s*const SizedBox\(width: 1\),\n\s*Text\(\n\s*'YouPipe',.*?height: 1,\n\s*\),\n\s*\),",
+              "", s, count=1, flags=re.S)
+          assert new != s, "Nu am gasit textul din antet"
+          open(p, 'w').write(new)
+          PY
+
+      - name: Fundal negru OLED (FF000000)
+        run: |
+          sed -i 's/background: Color(0xFF0F0F0F)/background: Color(0xFF000000)/; s/navBar: Color(0xFF0F0F0F)/navBar: Color(0xFF000000)/' lib/ui/theme/yt_theme.dart
+          grep -q "background: Color(0xFF000000)" lib/ui/theme/yt_theme.dart || { echo "Nu am gasit culoarea de fundal"; exit 1; }
+          sed -i 's/#0F0F0F/#000000/' android/app/src/main/res/values-night-v31/styles.xml || true
+
+      - name: Scoate toate Shorts (bara de jos si din aplicatie)
+        run: |
+          python3 - <<'PY'
+          import re, sys
+
+          def patch(path, old, new, count=1):
+              s = open(path).read()
+              assert s.count(old) >= 1, f"Nu am gasit in {path}: {old[:60]}"
+              s = s.replace(old, new) if count == 0 else s.replace(old, new, count)
+              open(path, 'w').write(s)
+
+          # 1) Bara de jos si rail-ul lateral: fara butonul Shorts
+          p = 'lib/ui/shell/app_shell.dart'
+          s = open(p).read()
+          old = 'for (var i = 0; i < _navLabels.length; i++)'
+          assert s.count(old) == 2, "Bucle de navigare neasteptate"
+          s = s.replace(old, old + '\n                if (i != 1)')
+          open(p, 'w').write(s)
+
+          # 2) Nicio intrare Shorts nu mai e citita din raspunsurile YouTube
+          p = 'lib/innertube/parsers.dart'
+          patch(p, 'YtItem? _shortsLockup(Json v) {\n', 'YtItem? _shortsLockup(Json v) {\n  return null;\n')
+          patch(p, 'YtItem? _reelItem(Json v) {\n', 'YtItem? _reelItem(Json v) {\n  return null;\n')
+          # filtrul "Shorts" din cautare
+          patch(p, "if (nav<Json>(f, ['searchFilterRenderer']) case final r?)",
+                   "if (nav<Json>(f, ['searchFilterRenderer']) case final r? when textOf(r['label']) != 'Shorts')")
+
+          # 3) Home: fara raftul Shorts
+          patch('lib/features/home/home_screen.dart',
+                "final shorts = ref.watch(homeShortsProvider).value ?? const <VideoItem>[];",
+                "final shorts = const <VideoItem>[];")
+
+          # 4) Abonamente: fara chip si fara raft Shorts
+          p = 'lib/features/subscriptions/subscriptions_screen.dart'
+          patch(p, "final shorts = _filter == _Filter.all ? filtered.where((v) => v.isShort).take(12).toList() : const <VideoItem>[];",
+                   "final shorts = const <VideoItem>[];")
+          patch(p, "for (final f in _Filter.values)", "for (final f in _Filter.values.where((x) => x != _Filter.shorts))")
+
+          # 5) Canale: fara tab Shorts
+          patch('lib/features/channel/channel_screen.dart',
+                "{'Home', 'Videos', 'Shorts', 'Live',", "{'Home', 'Videos', 'Live',")
+          print("Shorts eliminate")
+          PY
+
+      - name: Scoate bara All / Music / Gaming din Home
+        run: |
+          python3 - <<'PY'
+          import re
+          p = 'lib/features/home/home_screen.dart'
+          s = open(p).read()
+          new = re.sub(
+              r"YtTopBar\(\n\s*bottom: PreferredSize\(.*?select\(c\),\n\s*\),\n\s*\],\n\s*\),\n\s*\),\n\s*\),",
+              "const YtTopBar(),", s, count=1, flags=re.S)
+          assert new != s, "Nu am gasit bara de chip-uri din Home"
+          open(p, 'w').write(new)
+          print("Bara de chip-uri eliminata")
+          PY
+
+      - name: Scoate sectiunea de comentarii
+        run: |
+          python3 - <<'PY'
+          import re
+          p = 'lib/features/watch/watch_details.dart'
+          s = open(p).read()
+          new = re.sub(
+              r"\n\s*SliverToBoxAdapter\(\n\s*child: _CommentsTeaser\(videoId: video\.id, onTap: \(\) => onSheet\(WatchSheet\.comments\)\),\n\s*\),",
+              "", s, count=1)
+          assert new != s, "Nu am gasit sectiunea de comentarii"
+          open(p, 'w').write(new)
+          print("Comentarii eliminate")
+          PY
+
+      - name: Traducere in romana si Romania ca locatie implicita
+        run: |
+          python3 - <<'PY'
+          import re
+
+          FILES = """lib/features/settings/settings_screen.dart lib/features/account/account.dart lib/features/you/you_screen.dart
+          lib/ui/widgets/video_menu.dart lib/features/playlist/playlist_screen.dart lib/features/watch/player_settings.dart
+          lib/features/watch/watch_details.dart lib/features/search/search_screen.dart lib/features/update/update_sheet.dart
+          lib/features/update/update.dart lib/features/update/updater.dart lib/features/downloads/downloads.dart
+          lib/features/sponsorblock/sponsorblock.dart lib/features/home/home_screen.dart
+          lib/features/subscriptions/subscriptions_screen.dart lib/features/subscriptions/import_export.dart
+          lib/ui/shell/app_shell.dart lib/features/cast/cast_feature.dart lib/features/watch/player_view.dart
+          lib/ui/widgets/video_tiles.dart lib/ui/widgets/common.dart lib/ui/widgets/top_bar.dart lib/features.dart
+          lib/data/video_info.dart""".split()
+
+          T = {
+           # --- Setari ---
+           "Settings": "Setări", "General": "General", "Appearance": "Aspect",
+           "Use device theme": "Folosește tema dispozitivului", "Dark theme": "Temă întunecată", "Light theme": "Temă luminoasă",
+           "Language": "Limbă", "Location": "Locație", "Picture-in-picture": "Picture-in-picture",
+           "Keep watching in a small window when you leave the app": "Continuă să te uiți într-o fereastră mică când ieși din aplicație",
+           "Playback": "Redare", "Resume where you left off": "Reia de unde ai rămas",
+           "Video quality preferences": "Preferințe de calitate video",
+           "Manage all history": "Gestionează tot istoricul", "Pause watch history": "Oprește istoricul de vizionare",
+           "Pause search history": "Oprește istoricul căutărilor", "Clear watch history": "Șterge istoricul de vizionare",
+           "Watch history cleared": "Istoricul de vizionare a fost șters", "Clear search history": "Șterge istoricul căutărilor",
+           "Search history cleared": "Istoricul căutărilor a fost șters", "About": "Despre",
+           "Open source licenses": "Licențe open source",
+           "YouPipe is an independent, open-source app. It isn\\'t made by or affiliated with YouTube or Google.":
+             "YouPipe este o aplicație independentă, open source. Nu este creată de YouTube sau Google și nu are legătură cu acestea.",
+           "United States": "Statele Unite", "United Kingdom": "Regatul Unit", "Ireland": "Irlanda", "India": "India",
+           "Canada": "Canada", "Australia": "Australia", "Germany": "Germania", "France": "Franța", "Spain": "Spania",
+           "Brazil": "Brazilia", "Japan": "Japonia", "South Korea": "Coreea de Sud", "United Arab Emirates": "Emiratele Arabe Unite",
+           # --- Actualizari ---
+           "Updates": "Actualizări", "Check for updates automatically": "Verifică automat actualizările",
+           "Looks for a new release on GitHub when the app opens": "Caută o versiune nouă pe GitHub când se deschide aplicația",
+           "Check for updates": "Verifică actualizările", "Couldn't check for updates": "Nu s-au putut verifica actualizările",
+           "Update available": "Actualizare disponibilă", "Update": "Actualizează", "Later": "Mai târziu",
+           "Skip this version": "Sari peste această versiune", "Full release notes": "Notele complete ale versiunii",
+           "Open GitHub": "Deschide GitHub", "Try again": "Încearcă din nou",
+           "Opening the installer…": "Se deschide instalatorul…", "Downloading…": "Se descarcă…",
+           "Downloading… ${_mb(received)} of ${_mb(total)}": "Se descarcă… ${_mb(received)} din ${_mb(total)}",
+           "Version ${update.version} • ${_mb(update.apk.size)}": "Versiunea ${update.version} • ${_mb(update.apk.size)}",
+           "The download was damaged. Try again.": "Descărcarea este deteriorată. Încearcă din nou.",
+           "Uninstall it, then install the latest version from GitHub.": "Dezinstalează-o, apoi instalează ultima versiune de pe GitHub.",
+           "The installed version is newer than this release.": "Versiunea instalată este mai nouă decât această versiune.",
+           "The download is damaged": "Descărcarea este deteriorată", "Download cancelled": "Descărcare anulată",
+           # --- Butoane / dialoguri comune ---
+           "Cancel": "Anulează", "Delete": "Șterge", "Remove": "Elimină", "Save": "Salvează", "Retry": "Reîncearcă",
+           "Rename": "Redenumește", "Share": "Distribuie", "Download": "Descarcă", "Close": "Închide",
+           "Search": "Caută", "View all": "Vezi tot", "Undo": "Anulează", "Accept": "Acceptă", "Off": "Oprit",
+           "Show": "Afișează", "Skip": "Sari peste", "Expand": "Extinde", "Pause": "Pauză", "Play": "Redare",
+           "Previous": "Anterior", "Next": "Următorul", "Like": "Îmi place", "Dislike": "Nu îmi place",
+           "Comments": "Comentarii", "Subscribe": "Abonează-te", "Subscribed": "Abonat", "Unsubscribe": "Dezabonează-te",
+           "Save to Watch later": "Salvează la Vizionează mai târziu", "Remove from Watch later": "Elimină din Vizionează mai târziu",
+           "Saved to Watch later": "Salvat la Vizionează mai târziu", "Removed from Watch later": "Eliminat din Vizionează mai târziu",
+           "Watch later": "Vizionează mai târziu", "Watch later updated": "Vizionează mai târziu a fost actualizat",
+           # --- Navigare ---
+           "Search YouPipe": "Caută în YouPipe",
+           # --- Eroare ---
+           "No connection": "Fără conexiune", "Something went wrong": "Ceva nu a funcționat",
+           "Check your internet connection and try again.": "Verifică conexiunea la internet și încearcă din nou.",
+           "Tap to retry.": "Atinge pentru a reîncerca.", "Tap to retry": "Atinge pentru a reîncerca",
+           "This video is age-restricted": "Acest videoclip are restricție de vârstă",
+           "This video is not available in your country": "Acest videoclip nu este disponibil în țara ta",
+           "This video is unavailable": "Acest videoclip nu este disponibil",
+           "YouTube is rate-limiting this device. Try again later": "YouTube limitează acest dispozitiv. Încearcă mai târziu",
+           "No playable stream for this video": "Niciun flux redabil pentru acest videoclip",
+           "Couldn\\'t load this video": "Nu s-a putut încărca acest videoclip",
+           # --- Cont ---
+           "Signed in": "Autentificat", "Sign in": "Autentifică-te", "Sign in (optional)": "Autentifică-te (opțional)",
+           "You": "Tu", "Your library lives on this device": "Biblioteca ta este stocată pe acest dispozitiv",
+           "Sign out?": "Te deconectezi?", "Your library on this device stays.": "Biblioteca de pe acest dispozitiv rămâne.",
+           "Sign out": "Deconectează-te", "Your YouTube account": "Contul tău YouTube", "YouTube history": "Istoric YouTube",
+           "YouTube playlists": "Liste de redare YouTube", "Liked videos": "Videoclipuri apreciate",
+           "Import subscriptions from your account": "Importă abonamentele din contul tău",
+           "Importing subscriptions…": "Se importă abonamentele…",
+           "Your YouTube account has no subscriptions": "Contul tău YouTube nu are abonamente",
+           "Couldn\\'t import subscriptions": "Nu s-au putut importa abonamentele",
+           # --- Cast ---
+           "Cast": "Proiectează", "Select a device": "Alege un dispozitiv", "Connected": "Conectat", "Connecting…": "Se conectează…",
+           "Smart TV (DLNA)": "Smart TV (DLNA)", "Looking for devices on your Wi-Fi…": "Se caută dispozitive în rețeaua Wi-Fi…",
+           "Your phone and TV need to be on the same Wi-Fi": "Telefonul și televizorul trebuie să fie în aceeași rețea Wi-Fi",
+           "Disconnect": "Deconectează", "Playing on ${remote.deviceName}": "Se redă pe ${remote.deviceName}",
+           # --- Descarcari ---
+           "Downloads": "Descărcări", "Full HD": "Full HD", "High": "Mare", "Medium": "Medie", "Low": "Mică",
+           "Download quality": "Calitatea descărcării", "Can\\'t download this video": "Nu se poate descărca acest videoclip",
+           "Downloading…": "Se descarcă…", "View": "Vezi", "Retry download": "Reîncearcă descărcarea",
+           "Delete from downloads": "Șterge din descărcări", "Cancel download": "Anulează descărcarea",
+           "Removed from downloads": "Eliminat din descărcări", "Downloaded": "Descărcat", "Waiting": "În așteptare",
+           "Failed": "Eșuat", "No downloads": "Nicio descărcare",
+           "Videos you download show up here, and play without a connection.": "Videoclipurile descărcate apar aici și se redau fără conexiune.",
+           "Waiting to download…": "Se așteaptă descărcarea…",
+           "Downloading · ${_size(d.row.downloadedBytes)} of ${_size(d.row.sizeBytes)}": "Se descarcă · ${_size(d.row.downloadedBytes)} din ${_size(d.row.sizeBytes)}",
+           "Download failed. Tap to retry": "Descărcarea a eșuat. Atinge pentru a reîncerca",
+           # --- Acasa ---
+           "Try searching to get started": "Încearcă o căutare ca să începi",
+           "Start watching videos to help us build a feed of videos you\\'ll love.": "Începe să te uiți la videoclipuri ca să îți construim un flux pe gustul tău.",
+           "Your feed, on this device": "Fluxul tău, pe acest dispozitiv",
+           "Until then, here are popular videos.": "Până atunci, iată videoclipuri populare.",
+           # --- Liste de redare ---
+           "Play all": "Redă tot", "Shuffle": "Amestecă", "Removed from library": "Eliminat din bibliotecă",
+           "Saved to library": "Salvat în bibliotecă", "Removed from $title": "Eliminat din $title",
+           "Rename playlist": "Redenumește lista", "Delete playlist?": "Ștergi lista de redare?", "Delete playlist": "Șterge lista de redare",
+           "Private": "Privat", "Playlist": "Listă de redare", "No videos in this playlist yet": "Încă nu există videoclipuri în această listă",
+           "Videos you like will show up here": "Videoclipurile apreciate vor apărea aici",
+           "Save videos from their ⋮ menu": "Salvează videoclipuri din meniul lor ⋮",
+           "Remove from $title": "Elimină din $title", "New playlist": "Listă de redare nouă", "Choose a title": "Alege un titlu",
+           # --- Cautare ---
+           "Remove from search history?": "Elimini din istoricul căutărilor?", "No results found": "Niciun rezultat",
+           "Try different keywords": "Încearcă alte cuvinte cheie", "Search filters": "Filtre de căutare",
+           # --- Player ---
+           "Captions off": "Subtitrări oprite", "Quality": "Calitate", "Playback speed": "Viteza de redare", "Normal": "Normală",
+           "Captions": "Subtitrări", "Loop video": "Repetă videoclipul", "Sleep timer": "Temporizator de oprire",
+           "End of video": "Sfârșitul videoclipului", "Auto": "Automat", "Higher picture quality": "Calitate mai bună a imaginii",
+           "Data saver": "Economisire date", "Quality for current video": "Calitatea pentru videoclipul curent",
+           "Auto (recommended)": "Automat (recomandat)", "Adjusts to give you the best experience for your conditions": "Se adaptează pentru cea mai bună experiență în condițiile tale",
+           "Uses more data": "Folosește mai multe date", "Lower picture quality": "Calitate mai mică a imaginii",
+           "Sleep timer off": "Temporizator oprit", "Sleep timer set": "Temporizator setat",
+           "Autoplay is off": "Redarea automată este oprită", "Autoplay is on": "Redarea automată este pornită",
+           "Autoplay": "Redare automată", "Up next in $seconds": "Urmează în $seconds",
+           # --- Pagina video ---
+           "Removed from Liked videos": "Eliminat din Videoclipuri apreciate", "Added to Liked videos": "Adăugat la Videoclipuri apreciate",
+           "Description": "Descriere", "Likes": "Aprecieri", "Watching": "Vizionează", "Views": "Vizionări", "Chapters": "Capitole",
+           "Show more replies": "Arată mai multe răspunsuri", "Queue · ${now.index + 1} / ${now.queue.length}": "Coadă · ${now.index + 1} / ${now.queue.length}",
+           "Queue · ${now.index + 1}/${now.queue.length}": "Coadă · ${now.index + 1}/${now.queue.length}",
+           "Next: ${next.title}": "Următorul: ${next.title}", "Save": "Salvează",
+           # --- Biblioteca ---
+           "History": "Istoric", "Playlists": "Liste de redare", "Your subscriptions": "Abonamentele tale",
+           "Clear all watch history": "Șterge tot istoricul de vizionare", "Clear watch history?": "Ștergi istoricul de vizionare?",
+           "Your watch history will be cleared from this device.": "Istoricul de vizionare va fi șters de pe acest dispozitiv.",
+           "Keep track of what you watch": "Ține evidența a ce vizionezi",
+           "Watch history isn\\'t viewable when empty.": "Istoricul de vizionare nu poate fi afișat când este gol.",
+           "Removed from watch history": "Eliminat din istoricul de vizionare", "Remove from watch history": "Elimină din istoricul de vizionare",
+           "Private · ${p.count} videos": "Privat · ${p.count} videoclipuri",
+           "January": "ianuarie", "February": "februarie", "March": "martie", "April": "aprilie", "May": "mai", "June": "iunie",
+           "July": "iulie", "August": "august", "September": "septembrie", "October": "octombrie", "November": "noiembrie", "December": "decembrie",
+           "Today": "Astăzi", "Yesterday": "Ieri", "This week": "Săptămâna aceasta",
+           "Jan": "ian.", "Feb": "feb.", "Mar": "mar.", "Apr": "apr.", "Jun": "iun.", "Jul": "iul.", "Aug": "aug.", "Sep": "sep.",
+           "Oct": "oct.", "Nov": "nov.", "Dec": "dec.",
+           # --- Meniu video ---
+           "Play next in queue": "Redă următorul în coadă", "Video will play next": "Videoclipul va fi redat următorul",
+           "Save to playlist": "Salvează într-o listă de redare", "Download video": "Descarcă videoclipul", "Go to channel": "Mergi la canal",
+           "Save video to...": "Salvează videoclipul în...", "Saved to ${p.playlist.name}": "Salvat în ${p.playlist.name}",
+           "Removed from ${p.playlist.name}": "Eliminat din ${p.playlist.name}", "Saved to ${name.trim()}": "Salvat în ${name.trim()}",
+           # --- Abonamente ---
+           "Continue watching": "Continuă vizionarea", "Unwatched": "Nevizionate",
+           "Subscribe to channels to see their latest videos here. Subscriptions are kept on this device.": "Abonează-te la canale ca să vezi aici ultimele lor videoclipuri. Abonamentele sunt păstrate pe acest dispozitiv.",
+           "Find channels": "Găsește canale", "Loading your subscriptions…": "Se încarcă abonamentele…", "Nothing here": "Nimic aici",
+           "Pull down to refresh.": "Trage în jos pentru a reîmprospăta.", "Try another filter.": "Încearcă alt filtru.",
+           "All subscriptions": "Toate abonamentele", "No subscriptions yet": "Încă nu ai abonamente",
+           "Unsubscribe from $channelName?": "Te dezabonezi de la $channelName?",
+           "Subscription removed": "Abonament eliminat", "Subscription added": "Abonament adăugat",
+           "Choose subscriptions.csv or a NewPipe export": "Alege subscriptions.csv sau un export NewPipe",
+           "No channels found in that file": "Nu s-a găsit niciun canal în acel fișier",
+           "Import (Google Takeout or NewPipe)": "Importă (Google Takeout sau NewPipe)", "Export": "Exportă",
+           # --- SponsorBlock ---
+           "Sponsor": "Sponsor", "Paid promotion": "Promovare plătită", "Unpaid/self promotion": "Autopromovare",
+           "Merch, donations, shout-outs": "Merchandising, donații, mulțumiri", "Interaction reminder": "Reamintire de interacțiune",
+           "Intermission/intro": "Pauză/introducere", "Intro animations, pauses": "Animații de introducere, pauze",
+           "Endcards/credits": "Ecrane finale/generic", "Credits and end screens": "Generic și ecrane finale",
+           "Preview/recap": "Previzualizare/rezumat", "Clips of what is coming or was shown": "Fragmente din ce urmează sau a fost arătat",
+           "Filler tangent": "Divagații", "Off-topic jokes and tangents": "Glume și divagații în afara subiectului",
+           "Non-music section": "Secțiune fără muzică", "In music videos": "În videoclipuri muzicale",
+           "Skip sponsors and more": "Sari peste sponsori și altele",
+           "Community-submitted segments from sponsor.ajay.app": "Segmente trimise de comunitate de la sponsor.ajay.app",
+           # --- Alte ---
+           "No views": "Fără vizionări", "Just now": "Chiar acum", "Pause": "Pauză",
+          }
+
+          # Nume butoane din bara de navigare
+          p = 'lib/ui/shell/app_shell.dart'
+          s = open(p, encoding='utf-8').read()
+          old = "const _navLabels = ['Home', 'Shorts', 'Subscriptions', 'You'];"
+          assert old in s, "Nu am gasit etichetele din bara de navigare"
+          s = s.replace(old, "const _navLabels = ['Acasă', 'Shorts', 'Abonamente', 'Tu'];")
+          open(p, 'w', encoding='utf-8').write(s)
+
+          missing = []
+          total = 0
+          for f in FILES:
+              try:
+                  s = open(f, encoding='utf-8').read()
+              except FileNotFoundError:
+                  continue
+              orig = s
+              for en, ro in T.items():
+                  for q in ("'", '"'):
+                      a, b = q + en + q, q + ro + q
+                      if a in s:
+                          s = s.replace(a, b); total += 1
+              if s != orig:
+                  open(f, 'w', encoding='utf-8').write(s)
+
+          # Limba si regiunea: adauga Romania si seteaza-o ca implicita
+          p = 'lib/features/settings/settings_screen.dart'
+          s = open(p, encoding='utf-8').read()
+          assert "  'en': 'English',\n" in s and "  'US': 'Statele Unite',\n" in s
+          s = s.replace("  'en': 'English',\n", "  'en': 'English',\n  'ro': 'Română',\n", 1)
+          s = s.replace("  'US': 'Statele Unite',\n", "  'RO': 'România',\n  'US': 'Statele Unite',\n", 1)
+          open(p, 'w', encoding='utf-8').write(s)
+
+          p = 'lib/providers.dart'
+          s = open(p, encoding='utf-8').read()
+          old = "gl: p.getString('gl') ?? 'US',"
+          assert old in s, "Nu am gasit locatia implicita"
+          s = s.replace(old, "gl: p.getString('gl') ?? 'RO',")
+          open(p, 'w', encoding='utf-8').write(s)
+          print(f"Traduceri aplicate: {total}; Romania setata ca locatie implicita")
+          PY
+
+      - name: Bara de navigare ascunsa (apare la derulare) si mod imersiv
+        run: |
+          python3 - <<'PY'
+          p = 'lib/ui/shell/app_shell.dart'
+          s = open(p, encoding='utf-8').read()
+
+          def rep(old, new):
+              global s
+              assert s.count(old) == 1, f"Potrivire neasteptata ({s.count(old)}): {old[:70]}"
+              s = s.replace(old, new)
+
+          # 0) import necesar pentru ScrollDirection
+          rep("import 'package:flutter/material.dart';\n", "import 'package:flutter/material.dart';\nimport 'package:flutter/rendering.dart' show ScrollDirection;\n")
+
+          # 1) controller pentru ascunderea barei
+          rep("  late final _side = AnimationController(vsync: this, value: 1, duration: const Duration(milliseconds: 250));\n",
+              "  late final _side = AnimationController(vsync: this, value: 1, duration: const Duration(milliseconds: 250));\n\n"
+              "  /// 0 = bottom bar shown, 1 = hidden. Starts hidden; scrolling up shows it, scrolling down hides it.\n"
+              "  late final _navHide = AnimationController(vsync: this, value: 1, duration: const Duration(milliseconds: 200));\n")
+          rep("    _side.dispose();\n", "    _side.dispose();\n    _navHide.dispose();\n")
+          rep("Listenable.merge([_panel, _dismiss, _side])", "Listenable.merge([_panel, _dismiss, _side, _navHide])")
+
+          # 2) spatiul de jos: bara + continutul + mini player se muta impreuna
+          rep("                          final t = playing == null ? 0.0 : _panel.value;\n",
+              "                          final t = playing == null ? 0.0 : _panel.value;\n"
+              "                          final navGap = navHeight * (1 - _navHide.value) + (wide ? 0.0 : media.padding.bottom * _navHide.value);\n")
+          rep("final miniTop = size.height - navHeight - miniH - m;", "final miniTop = size.height - navGap - miniH - m;")
+          rep("                                left: railW,\n                                bottom: navHeight,\n",
+              "                                left: railW,\n                                bottom: navGap,\n")
+          rep("bottom: -navHeight * t,", "bottom: -navHeight * math.max(t, _navHide.value),")
+
+          # 3) detectarea derularii in pagini
+          rep("                                      child: widget.navigationShell,\n",
+              "                                      child: NotificationListener<UserScrollNotification>(\n"
+              "                                        onNotification: _onUserScroll,\n"
+              "                                        child: widget.navigationShell,\n"
+              "                                      ),\n")
+          rep("  void _openTab(int i) {\n", 
+              "  /// Scrolling up shows the bottom bar; scrolling down hides it.\n"
+              "  bool _onUserScroll(UserScrollNotification n) {\n"
+              "    if (n.metrics.axis != Axis.vertical) return false;\n"
+              "    if (n.direction == ScrollDirection.reverse) {\n"
+              "      _navHide.forward();\n"
+              "    } else if (n.direction == ScrollDirection.forward) {\n"
+              "      _navHide.reverse();\n"
+              "    }\n"
+              "    return false;\n"
+              "  }\n\n"
+              "  void _openTab(int i) {\n    _navHide.reverse();\n")
+
+          open(p, 'w', encoding='utf-8').write(s)
+          rep("await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);", "await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);")
+          open(p, 'w', encoding='utf-8').write(s)
+
+          p = 'lib/main.dart'
+          m = open(p, encoding='utf-8').read()
+          old = "SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge)"
+          assert m.count(old) == 1, "Nu am gasit modul edge-to-edge din main.dart"
+          open(p, 'w', encoding='utf-8').write(m.replace(old, "SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky)"))
+          print("Bara de navigare ascunsa implicit (apare la derulare in sus) + mod imersiv")
+          PY
+
+      - name: Elimina bara neagra de sus (imersiv complet)
+        run: |
+          python3 - <<'PY'
+          p = 'lib/main.dart'
+          s = open(p, encoding='utf-8').read()
+          old = "Offstage(offstage: pip, child: child),"
+          assert s.count(old) == 1, "Nu am gasit builder-ul din main.dart"
+          new = """Offstage(
+                        offstage: pip,
+                        child: MediaQuery(
+                          // Imersiv complet: nu mai rezervam spatiu sus pentru bara de stare / decupajul camerei.
+                          data: MediaQuery.of(context).copyWith(
+                            padding: MediaQuery.of(context).padding.copyWith(top: 0),
+                            viewPadding: MediaQuery.of(context).viewPadding.copyWith(top: 0),
+                          ),
+                          child: child ?? const SizedBox.shrink(),
+                        ),
+                      ),"""
+          s = s.replace(old, new)
+          open(p, 'w', encoding='utf-8').write(s)
+          print("Spatiul rezervat sus a fost eliminat")
+          PY
+
+      - name: Bara de jos semi-transparenta
+        run: |
+          python3 - <<'PY'
+          p = 'lib/ui/shell/app_shell.dart'
+          s = open(p, encoding='utf-8').read()
+
+          def rep(old, new):
+              global s
+              assert s.count(old) == 1, f"Potrivire neasteptata ({s.count(old)}): {old[:70]}"
+              s = s.replace(old, new)
+
+          # Bara de jos semi-transparenta (doar bara de jos, nu rail-ul lateral)
+          i = s.index("class _BottomNav extends StatelessWidget")
+          old = "      color: c.navBar,\n"
+          j = s.index(old, i)
+          s = s[:j] + "      color: c.navBar.withValues(alpha: 0.4),\n" + s[j + len(old):]
+
+          # Continutul se intinde sub bara, iar listele isi pastreaza spatiul liber la capat
+          rep("                                left: railW,\n                                bottom: navGap,\n",
+              "                                left: railW,\n                                bottom: 0,\n")
+          rep("bottom: playing != null && !hideMini ? miniH + 2 * m : 0,",
+              "bottom: (playing != null && !hideMini ? miniH + 2 * m : 0) + navGap,")
+          open(p, 'w', encoding='utf-8').write(s)
+          print("Bara de jos este semi-transparenta (40%)")
+          PY
+
+      - name: Scoate mesajul Fluxul tau pe acest dispozitiv
+        run: |
+          python3 - <<'PY'
+          import re
+          p = 'lib/features/home/home_screen.dart'
+          s = open(p, encoding='utf-8').read()
+          new = re.sub(
+              r"\n\s*if \(chip == HomeChip\.all && !hasHistory && !hasSubs && home\.hasValue\)\n\s*const SliverToBoxAdapter\(child: _StartCard\(\)\),",
+              "", s, count=1)
+          assert new != s, "Nu am gasit cardul de pe Home"
+          open(p, 'w', encoding='utf-8').write(new)
+          print("Cardul de pe Home a fost eliminat")
+          PY
+
+      - name: Scoate Mix-urile (mixajele)
+        run: |
+          python3 - <<'PY'
+          p = 'lib/innertube/parsers.dart'
+          s = open(p, encoding='utf-8').read()
+
+          def rep(old, new):
+              global s
+              assert s.count(old) == 1, f"Potrivire neasteptata ({s.count(old)}): {old[:70]}"
+              s = s.replace(old, new)
+
+          # Mix-urile (liste de redare generate automat) au ID-uri care incep cu "RD"
+          rep("      type == 'LOCKUP_CONTENT_TYPE_SHOW') {\n",
+              "      type == 'LOCKUP_CONTENT_TYPE_SHOW') {\n    if (id.startsWith('RD')) return null;\n")
+          rep("  final id = v['playlistId'] as String?;\n  final title = textOf(v['title']);\n  if (id == null || title == null) return null;\n",
+              "  final id = v['playlistId'] as String?;\n  final title = textOf(v['title']);\n  if (id == null || title == null) return null;\n  if (id.startsWith('RD')) return null;\n")
+          open(p, 'w', encoding='utf-8').write(s)
+          print("Mix-urile au fost eliminate")
+          PY
+
+      - name: Pornire pe muzica romaneasca noutati
+        run: |
+          python3 - <<'PY'
+          def patch(path, old, new):
+              s = open(path, encoding='utf-8').read()
+              assert s.count(old) == 1, f"Potrivire neasteptata ({s.count(old)}) in {path}: {old[:70]}"
+              open(path, 'w', encoding='utf-8').write(s.replace(old, new))
+
+          # Chip nou: muzica romaneasca, noutati (ultima luna, doar videoclipuri)
+          patch('lib/data/home_feed.dart',
+                "  static const all = HomeChip('All', kind: HomeChipKind.all);\n",
+                "  static const all = HomeChip('All', kind: HomeChipKind.all);\n\n"
+                "  /// Pagina de pornire: noutati din muzica romaneasca (cautare filtrata pe ultima luna, doar videoclipuri).\n"
+                "  static const romanian = HomeChip('Muzică românească', query: 'muzica romaneasca noutati', params: 'EgQIBBAB');\n")
+
+          # Aplicatia porneste pe acest chip
+          patch('lib/providers.dart', "  HomeChip build() => HomeChip.all;", "  HomeChip build() => HomeChip.romanian;")
+
+          # Cache-ul de pornire (feed-ul apare instant) functioneaza si pentru noul chip
+          patch('lib/providers.dart', "if (chip == HomeChip.all && !_cacheShown) {", "if (chip == HomeChip.romanian && !_cacheShown) {")
+          patch('lib/providers.dart', "if (chip == HomeChip.all && items.isNotEmpty) await writeVideoCache(prefs, _cacheKey, items);",
+                "if (chip == HomeChip.romanian && items.isNotEmpty) await writeVideoCache(prefs, _cacheKey, items);")
+          print("Aplicatia porneste pe muzica romaneasca - noutati")
+          PY
+
+      - name: Fara pauza intre videoclipuri
+        run: |
+          python3 - <<'PY'
+          def patch(path, old, new):
+              s = open(path, encoding='utf-8').read()
+              assert s.count(old) == 1, f"Potrivire neasteptata ({s.count(old)}) in {path}: {old[:70]}"
+              open(path, 'w', encoding='utf-8').write(s.replace(old, new))
+
+          # 1) Fara numaratoarea de 5 secunde: urmatorul videoclip porneste imediat
+          patch('lib/providers.dart',
+                "    if (!force && _watching) {\n      ref.read(upNextCountdownProvider.notifier).start(",
+                "    if (false) {\n      ref.read(upNextCountdownProvider.notifier).start(")
+
+          # 2) SponsorBlock: sare implicit peste pauze/introduceri si ecrane finale (liniste in clipurile muzicale)
+          sb = 'lib/features/sponsorblock/sponsorblock.dart'
+          patch(sb, "Color(0xFF00FFFF), SbAction.show),", "Color(0xFF00FFFF), SbAction.skip),")
+          patch(sb, "Color(0xFF0202ED), SbAction.show),", "Color(0xFF0202ED), SbAction.skip),")
+          print("Fara pauza intre videoclipuri + SponsorBlock sare peste pauze/ecrane finale")
+          PY
+
+      - name: Incarcare mai rapida a videoclipurilor
+        run: |
+          python3 - <<'PY'
+          def patch(path, old, new):
+              s = open(path, encoding='utf-8').read()
+              assert s.count(old) == 1, f"Potrivire neasteptata ({s.count(old)}) in {path}: {old[:70]}"
+              open(path, 'w', encoding='utf-8').write(s.replace(old, new))
+
+          p = 'lib/providers.dart'
+
+          # 1) Cat timp ruleaza un videoclip, pregatim in avans urmatorul (fara asteptarea de 3-5 s la autoplay)
+          patch(p,
+                "    await _svc.open(video.id, maxHeight: settings.quality.maxHeight, start: resume ?? Duration.zero);\n    final c = _svc.controller.value;\n",
+                "    await _svc.open(video.id, maxHeight: settings.quality.maxHeight, start: resume ?? Duration.zero);\n"
+                "    unawaited(_prefetchUpNext(video.id));\n    final c = _svc.controller.value;\n")
+          patch(p,
+                "  Future<void> _playAt(int index) async {\n",
+                "  /// Resolves the next video's streams while this one plays, so it can start without the usual wait.\n"
+                "  Future<void> _prefetchUpNext(String id) async {\n"
+                "    try {\n"
+                "      final next = await _upNextOf(id);\n"
+                "      if (next == null || state?.video.id != id) return;\n"
+                "      await _svc.infos.get(next.id, maxHeight: _svc.maxHeight);\n"
+                "    } catch (_) {}\n"
+                "  }\n\n"
+                "  Future<void> _playAt(int index) async {\n")
+
+          # 2) Primele videoclipuri din Home sunt pregatite in avans (se deschid mai repede la atingere)
+          patch(p,
+                "    final items = await mixer.next(20);\n",
+                "    final items = await mixer.next(20);\n"
+                "    final infoService = ref.read(videoInfoServiceProvider);\n"
+                "    final prefetchHeight = ref.read(settingsProvider).quality.maxHeight ?? 1080;\n"
+                "    for (final v in items.take(3)) {\n"
+                "      unawaited(infoService.get(v.id, maxHeight: prefetchHeight).then((_) {}, onError: (_) {}));\n"
+                "    }\n")
+          print("Incarcare mai rapida: urmatorul video + primele din Home sunt pregatite in avans")
+          PY
+
+      - name: Scoate cardul Coada de sub player
+        run: |
+          python3 - <<'PY'
+          import re
+          p = 'lib/features/watch/watch_details.dart'
+          s = open(p, encoding='utf-8').read()
+          new = re.sub(
+              r"\n\s*if \(now\.queue\.length > 1\)\n\s*SliverToBoxAdapter\(\n\s*child: _QueueCard\(now: now, onTap: \(\) => onSheet\(WatchSheet\.queue\)\),\n\s*\),",
+              "", s, count=1)
+          assert new != s, "Nu am gasit cardul Coada"
+          open(p, 'w', encoding='utf-8').write(new)
+          print("Cardul Coada a fost eliminat")
+          PY
+
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "17"
+          cache: gradle
 
-      - name: Set up Gradle (with cache)
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Install the pinned NDK
-        run: |
-          set -euo pipefail
-          (yes || true) | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" > /dev/null
-
-      - name: Build the debug APKs
-        run: |
-          chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace :smarttubetv:assembleStmobileDebug
-
-      - name: Collect the APKs
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          cp smarttubetv/build/outputs/renamed_apks/stmobileDebug/NewTube_*.apk dist/
-          ls -lh dist
-          universal="$(ls dist/NewTube_*_universal.apk | head -n 1)"
-          echo "UNIVERSAL_APK=$universal" >> "$GITHUB_ENV"
-
-      - name: Upload the APKs as a workflow artifact
-        uses: actions/upload-artifact@v4
+      - uses: subosito/flutter-action@v2
         with:
-          name: NewTube-debug-${{ github.run_number }}
-          path: dist/*.apk
-          if-no-files-found: error
-          retention-days: 14
+          channel: stable
+          flutter-version: "3.47.5"
+          cache: true
 
-      - name: Publish the universal APK as the v-debug pre-release
-        if: github.event_name == 'push' || inputs.publish_release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          gh release delete v-debug --cleanup-tag --yes || true
-          gh release create v-debug "$UNIVERSAL_APK" \
-            --prerelease \
-            --target "$GITHUB_SHA" \
-            --title "NewTube debug build" \
-            --notes "Debug build of ${GITHUB_SHA::7} (run #${GITHUB_RUN_NUMBER}). Universal APK; installs next to a release build."
+      - run: flutter pub get
+      - run: flutter build apk --release --split-per-abi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: youpipe-arm64
+          path: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
