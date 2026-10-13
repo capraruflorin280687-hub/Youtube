@@ -25,6 +25,26 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Locate project
+        id: proj
+        run: |
+          G=$(find . -maxdepth 3 -name gradlew -not -path '*/MediaServiceCore/*' -not -path '*/SharedModules/*' | head -n1)
+          if [ -z "$G" ]; then
+            echo "gradlew not found in repo. Files at root:"
+            ls -la
+            exit 1
+          fi
+          echo "dir=$(dirname "$G")" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch submodules if missing
+        working-directory: ${{ steps.proj.outputs.dir }}
+        run: |
+          if [ ! -f SharedModules/core_settings.gradle ] || [ ! -f MediaServiceCore/core_settings.gradle ]; then
+            rm -rf SharedModules MediaServiceCore
+            git clone --depth 1 --recursive https://github.com/aleixrodriala/SharedModules SharedModules
+            git clone --depth 1 --recursive https://github.com/aleixrodriala/MediaServiceCore MediaServiceCore
+          fi
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -36,18 +56,33 @@ jobs:
 
       - name: Configure release signing (optional)
         if: ${{ env.HAS_SIGNING_KEY == 'true' }}
+        working-directory: ${{ steps.proj.outputs.dir }}
         run: |
-          echo "${{ secrets.SIGNING_KEY }}" | base64 --decode > "$GITHUB_WORKSPACE/key.jks"
+          echo "${{ secrets.SIGNING_KEY }}" | base64 --decode > "$PWD/key.jks"
           {
-            echo "storeFile=$GITHUB_WORKSPACE/key.jks"
+            echo "storeFile=$PWD/key.jks"
             echo "storePassword=${{ secrets.KEY_STORE_PASSWORD }}"
             echo "keyAlias=${{ secrets.ALIAS }}"
             echo "keyPassword=${{ secrets.KEY_PASSWORD }}"
           } > keystore.properties
 
       - name: Make gradlew executable
+        working-directory: ${{ steps.proj.outputs.dir }}
         run: chmod +x gradlew
 
       - name: Build debug APK
         if: ${{ github.event.inputs.build_type != 'release' }}
-        run: ./gradlew :smarttubetv:assembleStmob
+        working-directory: ${{ steps.proj.outputs.dir }}
+        run: ./gradlew :smarttubetv:assembleStmobileDebug --stacktrace
+
+      - name: Build release APK
+        if: ${{ github.event.inputs.build_type == 'release' }}
+        working-directory: ${{ steps.proj.outputs.dir }}
+        run: ./gradlew :smarttubetv:assembleStmobileRelease --stacktrace
+
+      - name: Upload APK(s)
+        uses: actions/upload-artifact@v4
+        with:
+          name: newtube-apk-${{ github.event.inputs.build_type || 'debug' }}-${{ github.run_number }}
+          path: ${{ steps.proj.outputs.dir }}/smarttubetv/build/outputs/apk/**/*.apk
+          if-no-files-found: error
