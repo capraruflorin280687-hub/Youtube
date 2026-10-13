@@ -74,6 +74,20 @@ jobs:
           print("Shorts eliminate")
           PY
 
+      - name: Scoate bara All / Music / Gaming din Home
+        run: |
+          python3 - <<'PY'
+          import re
+          p = 'lib/features/home/home_screen.dart'
+          s = open(p).read()
+          new = re.sub(
+              r"YtTopBar\(\n\s*bottom: PreferredSize\(.*?select\(c\),\n\s*\),\n\s*\],\n\s*\),\n\s*\),\n\s*\),",
+              "const YtTopBar(),", s, count=1, flags=re.S)
+          assert new != s, "Nu am gasit bara de chip-uri din Home"
+          open(p, 'w').write(new)
+          print("Bara de chip-uri eliminata")
+          PY
+
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
