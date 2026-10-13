@@ -413,7 +413,7 @@ jobs:
           i = s.index("class _BottomNav extends StatelessWidget")
           old = "      color: c.navBar,\n"
           j = s.index(old, i)
-          s = s[:j] + "      color: c.navBar.withValues(alpha: 0.7),\n" + s[j + len(old):]
+          s = s[:j] + "      color: c.navBar.withValues(alpha: 0.4),\n" + s[j + len(old):]
 
           # Continutul se intinde sub bara, iar listele isi pastreaza spatiul liber la capat
           rep("                                left: railW,\n                                bottom: navGap,\n",
@@ -421,7 +421,41 @@ jobs:
           rep("bottom: playing != null && !hideMini ? miniH + 2 * m : 0,",
               "bottom: (playing != null && !hideMini ? miniH + 2 * m : 0) + navGap,")
           open(p, 'w', encoding='utf-8').write(s)
-          print("Bara de jos este semi-transparenta (70%)")
+          print("Bara de jos este semi-transparenta (40%)")
+          PY
+
+      - name: Scoate mesajul Fluxul tau pe acest dispozitiv
+        run: |
+          python3 - <<'PY'
+          import re
+          p = 'lib/features/home/home_screen.dart'
+          s = open(p, encoding='utf-8').read()
+          new = re.sub(
+              r"\n\s*if \(chip == HomeChip\.all && !hasHistory && !hasSubs && home\.hasValue\)\n\s*const SliverToBoxAdapter\(child: _StartCard\(\)\),",
+              "", s, count=1)
+          assert new != s, "Nu am gasit cardul de pe Home"
+          open(p, 'w', encoding='utf-8').write(new)
+          print("Cardul de pe Home a fost eliminat")
+          PY
+
+      - name: Scoate Mix-urile (mixajele)
+        run: |
+          python3 - <<'PY'
+          p = 'lib/innertube/parsers.dart'
+          s = open(p, encoding='utf-8').read()
+
+          def rep(old, new):
+              global s
+              assert s.count(old) == 1, f"Potrivire neasteptata ({s.count(old)}): {old[:70]}"
+              s = s.replace(old, new)
+
+          # Mix-urile (liste de redare generate automat) au ID-uri care incep cu "RD"
+          rep("      type == 'LOCKUP_CONTENT_TYPE_SHOW') {\n",
+              "      type == 'LOCKUP_CONTENT_TYPE_SHOW') {\n    if (id.startsWith('RD')) return null;\n")
+          rep("  final id = v['playlistId'] as String?;\n  final title = textOf(v['title']);\n  if (id == null || title == null) return null;\n",
+              "  final id = v['playlistId'] as String?;\n  final title = textOf(v['title']);\n  if (id == null || title == null) return null;\n  if (id.startsWith('RD')) return null;\n")
+          open(p, 'w', encoding='utf-8').write(s)
+          print("Mix-urile au fost eliminate")
           PY
 
       - uses: actions/setup-java@v6
