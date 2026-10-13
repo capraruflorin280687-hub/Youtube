@@ -1,3 +1,72 @@
-./gradlew :smarttubetv:assembleStmobileDebug     # debug, for testing
-./gradlew :smarttubetv:assembleStmobileRelease   # release, signed with keystore.properties if present
-# APKs: smarttubetv/build/outputs/renamed_apks/stmobile<Type>/MeTube_<version>_<abi>.apk
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v7
+
+      - name: Set up Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.47.5"
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Build APKs
+        run: |
+          flutter build apk --release --split-per-abi --build-number="${{ github.run_number }}"
+          mkdir dist
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            cp "build/app/outputs/flutter-apk/app-$abi-release.apk" "dist/YouPipe-Music-$abi.apk"
+          done
+
+      - name: Upload the APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: YouPipe-Music-apks
+          path: dist/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish the APKs on GitHub
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest --cleanup-tag --yes 2>/dev/null || true
+          gh release create latest dist/*.apk \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Latest build" \
+            --notes "Automatic test build of commit ${GITHUB_SHA::7}. Most phones need arm64-v8a."
