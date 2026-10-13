@@ -30,6 +30,50 @@ jobs:
           grep -q "background: Color(0xFF000000)" lib/ui/theme/yt_theme.dart || { echo "Nu am gasit culoarea de fundal"; exit 1; }
           sed -i 's/#0F0F0F/#000000/' android/app/src/main/res/values-night-v31/styles.xml || true
 
+      - name: Scoate toate Shorts (bara de jos si din aplicatie)
+        run: |
+          python3 - <<'PY'
+          import re, sys
+
+          def patch(path, old, new, count=1):
+              s = open(path).read()
+              assert s.count(old) >= 1, f"Nu am gasit in {path}: {old[:60]}"
+              s = s.replace(old, new) if count == 0 else s.replace(old, new, count)
+              open(path, 'w').write(s)
+
+          # 1) Bara de jos si rail-ul lateral: fara butonul Shorts
+          p = 'lib/ui/shell/app_shell.dart'
+          s = open(p).read()
+          old = 'for (var i = 0; i < _navLabels.length; i++)'
+          assert s.count(old) == 2, "Bucle de navigare neasteptate"
+          s = s.replace(old, old + '\n                if (i != 1)')
+          open(p, 'w').write(s)
+
+          # 2) Nicio intrare Shorts nu mai e citita din raspunsurile YouTube
+          p = 'lib/innertube/parsers.dart'
+          patch(p, 'YtItem? _shortsLockup(Json v) {\n', 'YtItem? _shortsLockup(Json v) {\n  return null;\n')
+          patch(p, 'YtItem? _reelItem(Json v) {\n', 'YtItem? _reelItem(Json v) {\n  return null;\n')
+          # filtrul "Shorts" din cautare
+          patch(p, "if (nav<Json>(f, ['searchFilterRenderer']) case final r?)",
+                   "if (nav<Json>(f, ['searchFilterRenderer']) case final r? when textOf(r['label']) != 'Shorts')")
+
+          # 3) Home: fara raftul Shorts
+          patch('lib/features/home/home_screen.dart',
+                "final shorts = ref.watch(homeShortsProvider).value ?? const <VideoItem>[];",
+                "final shorts = const <VideoItem>[];")
+
+          # 4) Abonamente: fara chip si fara raft Shorts
+          p = 'lib/features/subscriptions/subscriptions_screen.dart'
+          patch(p, "final shorts = _filter == _Filter.all ? filtered.where((v) => v.isShort).take(12).toList() : const <VideoItem>[];",
+                   "final shorts = const <VideoItem>[];")
+          patch(p, "for (final f in _Filter.values)", "for (final f in _Filter.values.where((x) => x != _Filter.shorts))")
+
+          # 5) Canale: fara tab Shorts
+          patch('lib/features/channel/channel_screen.dart',
+                "{'Home', 'Videos', 'Shorts', 'Live',", "{'Home', 'Videos', 'Live',")
+          print("Shorts eliminate")
+          PY
+
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
