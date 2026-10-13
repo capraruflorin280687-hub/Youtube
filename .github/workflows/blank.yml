@@ -1,4 +1,4 @@
-name: Build YouPipe fara text
+name: Build YouPipe personalizat
 on:
   push:
   workflow_dispatch:
@@ -23,6 +23,12 @@ jobs:
           assert new != s, "Nu am gasit textul din antet"
           open(p, 'w').write(new)
           PY
+
+      - name: Fundal negru OLED (FF000000)
+        run: |
+          sed -i 's/background: Color(0xFF0F0F0F)/background: Color(0xFF000000)/; s/navBar: Color(0xFF0F0F0F)/navBar: Color(0xFF000000)/' lib/ui/theme/yt_theme.dart
+          grep -q "background: Color(0xFF000000)" lib/ui/theme/yt_theme.dart || { echo "Nu am gasit culoarea de fundal"; exit 1; }
+          sed -i 's/#0F0F0F/#000000/' android/app/src/main/res/values-night-v31/styles.xml || true
 
       - uses: actions/setup-java@v6
         with:
