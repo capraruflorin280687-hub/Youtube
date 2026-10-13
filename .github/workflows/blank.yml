@@ -375,6 +375,55 @@ jobs:
           print("Bara de navigare ascunsa implicit (apare la derulare in sus) + mod imersiv")
           PY
 
+      - name: Elimina bara neagra de sus (imersiv complet)
+        run: |
+          python3 - <<'PY'
+          p = 'lib/main.dart'
+          s = open(p, encoding='utf-8').read()
+          old = "Offstage(offstage: pip, child: child),"
+          assert s.count(old) == 1, "Nu am gasit builder-ul din main.dart"
+          new = """Offstage(
+                        offstage: pip,
+                        child: MediaQuery(
+                          // Imersiv complet: nu mai rezervam spatiu sus pentru bara de stare / decupajul camerei.
+                          data: MediaQuery.of(context).copyWith(
+                            padding: MediaQuery.of(context).padding.copyWith(top: 0),
+                            viewPadding: MediaQuery.of(context).viewPadding.copyWith(top: 0),
+                          ),
+                          child: child ?? const SizedBox.shrink(),
+                        ),
+                      ),"""
+          s = s.replace(old, new)
+          open(p, 'w', encoding='utf-8').write(s)
+          print("Spatiul rezervat sus a fost eliminat")
+          PY
+
+      - name: Bara de jos semi-transparenta
+        run: |
+          python3 - <<'PY'
+          p = 'lib/ui/shell/app_shell.dart'
+          s = open(p, encoding='utf-8').read()
+
+          def rep(old, new):
+              global s
+              assert s.count(old) == 1, f"Potrivire neasteptata ({s.count(old)}): {old[:70]}"
+              s = s.replace(old, new)
+
+          # Bara de jos semi-transparenta (doar bara de jos, nu rail-ul lateral)
+          i = s.index("class _BottomNav extends StatelessWidget")
+          old = "      color: c.navBar,\n"
+          j = s.index(old, i)
+          s = s[:j] + "      color: c.navBar.withValues(alpha: 0.7),\n" + s[j + len(old):]
+
+          # Continutul se intinde sub bara, iar listele isi pastreaza spatiul liber la capat
+          rep("                                left: railW,\n                                bottom: navGap,\n",
+              "                                left: railW,\n                                bottom: 0,\n")
+          rep("bottom: playing != null && !hideMini ? miniH + 2 * m : 0,",
+              "bottom: (playing != null && !hideMini ? miniH + 2 * m : 0) + navGap,")
+          open(p, 'w', encoding='utf-8').write(s)
+          print("Bara de jos este semi-transparenta (70%)")
+          PY
+
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
