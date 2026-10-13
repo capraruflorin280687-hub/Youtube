@@ -62,4 +62,22 @@ jobs:
           echo "UNIVERSAL_APK=$universal" >> "$GITHUB_ENV"
 
       - name: Upload the APKs as a workflow artifact
-        us
+        uses: actions/upload-artifact@v4
+        with:
+          name: NewTube-debug-${{ github.run_number }}
+          path: dist/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish the universal APK as the v-debug pre-release
+        if: github.event_name == 'push' || inputs.publish_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release delete v-debug --cleanup-tag --yes || true
+          gh release create v-debug "$UNIVERSAL_APK" \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "NewTube debug build" \
+            --notes "Debug build of ${GITHUB_SHA::7} (run #${GITHUB_RUN_NUMBER}). Universal APK; installs next to a release build."
