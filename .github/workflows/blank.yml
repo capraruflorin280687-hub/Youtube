@@ -132,6 +132,7 @@ jobs:
           import android.Manifest
           import android.annotation.SuppressLint
           import android.app.PictureInPictureParams
+          import android.content.Context
           import android.content.Intent
           import android.content.pm.PackageManager
           import android.content.res.Configuration
@@ -149,6 +150,7 @@ jobs:
           import android.webkit.WebView
           import android.webkit.WebViewClient
           import android.widget.FrameLayout
+          import android.widget.Toast
           import androidx.activity.OnBackPressedCallback
           import androidx.appcompat.app.AppCompatActivity
           import androidx.core.app.ActivityCompat
@@ -157,6 +159,13 @@ jobs:
           import androidx.core.view.WindowInsetsCompat
           import androidx.core.view.WindowInsetsControllerCompat
           import java.io.ByteArrayInputStream
+
+          class BgWebView(context: Context) : WebView(context) {
+              override fun onWindowVisibilityChanged(visibility: Int) {
+                  // Ignorăm "ascuns", ca să nu se oprească redarea în fundal
+                  if (visibility != View.GONE) super.onWindowVisibilityChanged(visibility)
+              }
+          }
 
           class MainActivity : AppCompatActivity() {
 
@@ -243,7 +252,7 @@ jobs:
                   super.onCreate(savedInstanceState)
 
                   root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
-                  webView = WebView(this)
+                  webView = BgWebView(this)
                   root.addView(
                       webView,
                       FrameLayout.LayoutParams(
@@ -278,6 +287,11 @@ jobs:
                               )
                           }
                           return super.shouldInterceptRequest(view, request)
+                      }
+
+                      override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
+                          super.doUpdateVisitedHistory(view, url, isReload)
+                          updatePipParams(url)
                       }
 
                       override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
@@ -358,15 +372,39 @@ jobs:
                   intent.data?.let { webView.loadUrl(it.toString()) }
               }
 
+              private fun pipParams(autoEnter: Boolean): PictureInPictureParams {
+                  val b = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9))
+                  if (Build.VERSION.SDK_INT >= 31) b.setAutoEnterEnabled(autoEnter)
+                  return b.build()
+              }
+
+              // Pe Android 12+, PiP pornește automat când ieși din aplicație în timpul unui video
+              private fun updatePipParams(url: String?) {
+                  if (Build.VERSION.SDK_INT >= 31) {
+                      try {
+                          setPictureInPictureParams(pipParams(url?.contains("/watch") == true))
+                      } catch (_: Exception) {
+                      }
+                  }
+              }
+
               // Când apeși Home în timp ce se redă un video, intră în Picture-in-Picture
               override fun onUserLeaveHint() {
                   super.onUserLeaveHint()
-                  if (Build.VERSION.SDK_INT >= 26 && webView.url?.contains("/watch") == true) {
+                  if (Build.VERSION.SDK_INT >= 26 &&
+                      webView.url?.contains("/watch") == true &&
+                      !isInPictureInPictureMode
+                  ) {
                       try {
-                          enterPictureInPictureMode(
-                              PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build()
-                          )
-                      } catch (_: Exception) {
+                          if (!enterPictureInPictureMode(pipParams(true))) {
+                              Toast.makeText(
+                                  this,
+                                  "PiP blocat: activeaz\u0103 Picture-in-picture pentru aplica\u021bie \u00een Set\u0103ri",
+                                  Toast.LENGTH_LONG
+                              ).show()
+                          }
+                      } catch (e: Exception) {
+                          Toast.makeText(this, "PiP indisponibil: ${e.message}", Toast.LENGTH_LONG).show()
                       }
                   }
               }
@@ -397,7 +435,21 @@ jobs:
 
               override fun onPause() {
                   super.onPause()
+                  // Reținem dacă video-ul rula, ca să îl putem relua dacă pagina îl oprește în fundal
+                  webView.evaluateJavascript(
+                      "(function(){var v=document.querySelector('video');" +
+                          "window.__ytWasPlaying=!!(v&&!v.paused&&!v.ended);})();", null
+                  )
                   CookieManager.getInstance().flush()
+              }
+
+              override fun onStop() {
+                  super.onStop()
+                  webView.resumeTimers()
+                  val resume = "(function(){var v=document.querySelector('video');" +
+                      "if(v&&window.__ytWasPlaying&&v.paused){v.play();}})();"
+                  webView.postDelayed({ webView.evaluateJavascript(resume, null) }, 400)
+                  webView.postDelayed({ webView.evaluateJavascript(resume, null) }, 1500)
               }
 
               override fun onDestroy() {
