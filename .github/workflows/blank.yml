@@ -483,6 +483,65 @@ jobs:
           print("Aplicatia porneste pe muzica romaneasca - noutati")
           PY
 
+      - name: Fara pauza intre videoclipuri
+        run: |
+          python3 - <<'PY'
+          def patch(path, old, new):
+              s = open(path, encoding='utf-8').read()
+              assert s.count(old) == 1, f"Potrivire neasteptata ({s.count(old)}) in {path}: {old[:70]}"
+              open(path, 'w', encoding='utf-8').write(s.replace(old, new))
+
+          # 1) Fara numaratoarea de 5 secunde: urmatorul videoclip porneste imediat
+          patch('lib/providers.dart',
+                "    if (!force && _watching) {\n      ref.read(upNextCountdownProvider.notifier).start(",
+                "    if (false) {\n      ref.read(upNextCountdownProvider.notifier).start(")
+
+          # 2) SponsorBlock: sare implicit peste pauze/introduceri si ecrane finale (liniste in clipurile muzicale)
+          sb = 'lib/features/sponsorblock/sponsorblock.dart'
+          patch(sb, "Color(0xFF00FFFF), SbAction.show),", "Color(0xFF00FFFF), SbAction.skip),")
+          patch(sb, "Color(0xFF0202ED), SbAction.show),", "Color(0xFF0202ED), SbAction.skip),")
+          print("Fara pauza intre videoclipuri + SponsorBlock sare peste pauze/ecrane finale")
+          PY
+
+      - name: Incarcare mai rapida a videoclipurilor
+        run: |
+          python3 - <<'PY'
+          def patch(path, old, new):
+              s = open(path, encoding='utf-8').read()
+              assert s.count(old) == 1, f"Potrivire neasteptata ({s.count(old)}) in {path}: {old[:70]}"
+              open(path, 'w', encoding='utf-8').write(s.replace(old, new))
+
+          p = 'lib/providers.dart'
+
+          # 1) Cat timp ruleaza un videoclip, pregatim in avans urmatorul (fara asteptarea de 3-5 s la autoplay)
+          patch(p,
+                "    await _svc.open(video.id, maxHeight: settings.quality.maxHeight, start: resume ?? Duration.zero);\n    final c = _svc.controller.value;\n",
+                "    await _svc.open(video.id, maxHeight: settings.quality.maxHeight, start: resume ?? Duration.zero);\n"
+                "    unawaited(_prefetchUpNext(video.id));\n    final c = _svc.controller.value;\n")
+          patch(p,
+                "  Future<void> _playAt(int index) async {\n",
+                "  /// Resolves the next video's streams while this one plays, so it can start without the usual wait.\n"
+                "  Future<void> _prefetchUpNext(String id) async {\n"
+                "    try {\n"
+                "      final next = await _upNextOf(id);\n"
+                "      if (next == null || state?.video.id != id) return;\n"
+                "      await _svc.infos.get(next.id, maxHeight: _svc.maxHeight);\n"
+                "    } catch (_) {}\n"
+                "  }\n\n"
+                "  Future<void> _playAt(int index) async {\n")
+
+          # 2) Primele videoclipuri din Home sunt pregatite in avans (se deschid mai repede la atingere)
+          patch(p,
+                "    final items = await mixer.next(20);\n",
+                "    final items = await mixer.next(20);\n"
+                "    final infoService = ref.read(videoInfoServiceProvider);\n"
+                "    final prefetchHeight = ref.read(settingsProvider).quality.maxHeight ?? 1080;\n"
+                "    for (final v in items.take(3)) {\n"
+                "      unawaited(infoService.get(v.id, maxHeight: prefetchHeight).then((_) {}, onError: (_) {}));\n"
+                "    }\n")
+          print("Incarcare mai rapida: urmatorul video + primele din Home sunt pregatite in avans")
+          PY
+
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
