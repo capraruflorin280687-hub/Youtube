@@ -458,6 +458,31 @@ jobs:
           print("Mix-urile au fost eliminate")
           PY
 
+      - name: Pornire pe muzica romaneasca noutati
+        run: |
+          python3 - <<'PY'
+          def patch(path, old, new):
+              s = open(path, encoding='utf-8').read()
+              assert s.count(old) == 1, f"Potrivire neasteptata ({s.count(old)}) in {path}: {old[:70]}"
+              open(path, 'w', encoding='utf-8').write(s.replace(old, new))
+
+          # Chip nou: muzica romaneasca, noutati (ultima luna, doar videoclipuri)
+          patch('lib/data/home_feed.dart',
+                "  static const all = HomeChip('All', kind: HomeChipKind.all);\n",
+                "  static const all = HomeChip('All', kind: HomeChipKind.all);\n\n"
+                "  /// Pagina de pornire: noutati din muzica romaneasca (cautare filtrata pe ultima luna, doar videoclipuri).\n"
+                "  static const romanian = HomeChip('Muzică românească', query: 'muzica romaneasca noutati', params: 'EgQIBBAB');\n")
+
+          # Aplicatia porneste pe acest chip
+          patch('lib/providers.dart', "  HomeChip build() => HomeChip.all;", "  HomeChip build() => HomeChip.romanian;")
+
+          # Cache-ul de pornire (feed-ul apare instant) functioneaza si pentru noul chip
+          patch('lib/providers.dart', "if (chip == HomeChip.all && !_cacheShown) {", "if (chip == HomeChip.romanian && !_cacheShown) {")
+          patch('lib/providers.dart', "if (chip == HomeChip.all && items.isNotEmpty) await writeVideoCache(prefs, _cacheKey, items);",
+                "if (chip == HomeChip.romanian && items.isNotEmpty) await writeVideoCache(prefs, _cacheKey, items);")
+          print("Aplicatia porneste pe muzica romaneasca - noutati")
+          PY
+
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
