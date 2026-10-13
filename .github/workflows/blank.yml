@@ -324,6 +324,9 @@ jobs:
               assert s.count(old) == 1, f"Potrivire neasteptata ({s.count(old)}): {old[:70]}"
               s = s.replace(old, new)
 
+          # 0) import necesar pentru ScrollDirection
+          rep("import 'package:flutter/material.dart';\n", "import 'package:flutter/material.dart';\nimport 'package:flutter/rendering.dart' show ScrollDirection;\n")
+
           # 1) controller pentru ascunderea barei
           rep("  late final _side = AnimationController(vsync: this, value: 1, duration: const Duration(milliseconds: 250));\n",
               "  late final _side = AnimationController(vsync: this, value: 1, duration: const Duration(milliseconds: 250));\n\n"
