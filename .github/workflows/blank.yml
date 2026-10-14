@@ -281,20 +281,26 @@ jobs:
               print("Nu am gasit builder-ul din main.dart (sar peste)")
           PY
 
+      # ⬇️ EFECT MAT — varianta reparata (import dart:ui as ui)
       - name: Bara de jos cu efect mat (frosted glass)
         continue-on-error: true
         run: |
           python3 - <<'PY'
+          import re
           p = 'lib/ui/shell/app_shell.dart'
           s = open(p, encoding='utf-8').read()
 
-          if "dart:ui" not in s:
-              s = s.replace(
-                  "import 'package:flutter/material.dart';",
-                  "import 'package:flutter/material.dart';\nimport 'dart:ui' show ImageFilter;",
-                  1,
-              )
+          # 1) Eliminam orice import dart:ui existent (ca sa nu avem duplicate)
+          s = re.sub(r"^import 'dart:ui'.*\n", "", s, flags=re.M)
 
+          # 2) Adaugam import dart:ui as ui dupa primul import de material
+          s = s.replace(
+              "import 'package:flutter/material.dart';\n",
+              "import 'package:flutter/material.dart';\nimport 'dart:ui' as ui;\n",
+              1,
+          )
+
+          # 3) Culoare mai transparenta pe bara de jos
           s = s.replace(
               "color: c.navBar.withValues(alpha: 0.4),",
               "color: c.navBar.withValues(alpha: 0.35),",
@@ -305,6 +311,12 @@ jobs:
                   "color: c.navBar.withValues(alpha: 0.35),",
               )
 
+          # 4) Stergem orice clasa _Frosted veche (ca sa nu duplicam)
+          s = re.sub(
+              r"\n/// Efect mat \(frosted glass\).*?class _Frosted extends StatelessWidget.*?\n}\n",
+              "\n", s, flags=re.S)
+
+          # 5) Adaugam clasa _Frosted noua cu ui.ImageFilter
           if "class _Frosted" not in s:
               s = s.rstrip() + '''
 
@@ -318,7 +330,7 @@ jobs:
             Widget build(BuildContext context) {
               return ClipRect(
                 child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+                  filter: ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
                   child: child,
                 ),
               );
@@ -326,14 +338,13 @@ jobs:
           }
           '''
           open(p, 'w', encoding='utf-8').write(s)
-          print("Clasa _Frosted adaugata")
+          print("Clasa _Frosted adaugata (cu ui.ImageFilter)")
           PY
 
-      # ⬇️ FORȚĂM AGP 9.1.1 + Gradle 9.5.0 (compatibil cu Flutter master/beta)
+      # ⬇️ FORȚĂM AGP 9.1.1 + Gradle 9.5.0 (compatibil cu Flutter beta)
       - name: Forțează AGP 9.1.1 și Gradle 9.5.0
         continue-on-error: true
         run: |
-          # AGP 9.1.1 în settings.gradle (Kotlin DSL sau Groovy)
           for f in android/settings.gradle android/settings.gradle.kts; do
             if [ -f "$f" ]; then
               sed -i 's/9\.1\.0/9.1.1/g' "$f"
@@ -342,7 +353,6 @@ jobs:
             fi
           done
 
-          # Gradle wrapper 9.5.0
           WRAP=android/gradle/wrapper/gradle-wrapper.properties
           if [ -f "$WRAP" ]; then
             sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-9.5.0-all.zip|' "$WRAP"
@@ -356,7 +366,6 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      # ⬇️ Beta = mai nou decât stable (are Dart 3.13+), mai vechi decât master (acceptă AGP proiect)
       - uses: subosito/flutter-action@v2
         with:
           channel: beta
