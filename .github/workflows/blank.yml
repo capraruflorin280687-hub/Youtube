@@ -843,6 +843,79 @@ jobs:
           print("Buton Doar audio adaugat")
           PY
 
+      - name: Aspect YouTube - pictograma, antet Premium, cautare
+        run: |
+          python3 - <<'PY'
+          import glob, os, subprocess, sys
+
+          try:
+              from PIL import Image, ImageDraw
+          except ImportError:
+              for extra in (['--break-system-packages'], ['--user'], []):
+                  if subprocess.run([sys.executable, '-m', 'pip', 'install', '--quiet', 'pillow', *extra]).returncode == 0:
+                      break
+              from PIL import Image, ImageDraw
+
+          def patch(path, old, new, count=1):
+              s = open(path, encoding='utf-8').read()
+              assert s.count(old) == count, f"Potrivire neasteptata ({s.count(old)}) in {path}: {old[:70]}"
+              open(path, 'w', encoding='utf-8').write(s.replace(old, new))
+
+          # --- 1) Sigla din antet: buton rosu de redare + textul "Premium" ---
+          open('assets/branding/logo.svg', 'w', encoding='utf-8').write(
+              '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 70" width="100" height="70">\n'
+              '  <rect width="100" height="70" rx="20" fill="#FF0000"/>\n'
+              '  <path d="M40 20 L40 50 L66 35 Z" fill="#FFFFFF"/>\n'
+              '</svg>\n')
+          patch('lib/ui/widgets/common.dart',
+                "      SvgPicture.asset('assets/branding/logo.svg', height: height * 1.45),\n    ],",
+                "      SvgPicture.asset('assets/branding/logo.svg', height: height * 1.45),\n"
+                "      const SizedBox(width: 5),\n"
+                "      Text('Premium', style: TextStyle(fontSize: height, fontWeight: FontWeight.w800, letterSpacing: -1.2, height: 1)),\n"
+                "    ],")
+
+          # --- 2) Bara de cautare: "Cauta in YouTube" ---
+          sp = 'lib/features/search/search_screen.dart'
+          s = open(sp, encoding='utf-8').read()
+          for old in ("Caută în YouPipe", "Search YouPipe"):
+              s = s.replace("'" + old + "'", "'Caută în YouTube'")
+          assert "YouPipe" not in s.split("hintText")[1][:80], "Textul din bara de cautare nu a fost schimbat"
+          open(sp, 'w', encoding='utf-8').write(s)
+
+          # --- 3) Pictograma aplicatiei (buton rosu de redare) + ecranul de pornire ---
+          def draw(size, mode, scale):
+              S = size * 4
+              im = Image.new('RGBA', (S, S), (0, 0, 0, 0))
+              d = ImageDraw.Draw(im)
+              if mode == 'legacy':
+                  d.rounded_rectangle((0, 0, S - 1, S - 1), radius=int(S * 0.22), fill=(255, 255, 255, 255))
+              w = S * scale
+              h = w * 0.70
+              x0, y0 = (S - w) / 2, (S - h) / 2
+              d.rounded_rectangle((x0, y0, x0 + w, y0 + h), radius=h * 0.28,
+                                  fill=(0, 0, 0, 255) if mode == 'mono' else (255, 0, 0, 255))
+              tri = [(x0 + w * 0.40, y0 + h * 0.28), (x0 + w * 0.40, y0 + h * 0.72), (x0 + w * 0.66, y0 + h * 0.50)]
+              d.polygon(tri, fill=(0, 0, 0, 0) if mode == 'mono' else (255, 255, 255, 255))
+              return im.resize((size, size), Image.LANCZOS)
+
+          res = 'android/app/src/main/res'
+          fg_sizes = {'mdpi': 108, 'hdpi': 162, 'xhdpi': 216, 'xxhdpi': 324, 'xxxhdpi': 432}
+          legacy_sizes = {'mdpi': 48, 'hdpi': 72, 'xhdpi': 96, 'xxhdpi': 144, 'xxxhdpi': 192}
+          count = 0
+          for dens, px in fg_sizes.items():
+              draw(px, 'fg', 0.58).save(f'{res}/drawable-{dens}/ic_launcher_foreground.png'); count += 1
+              draw(px, 'mono', 0.58).save(f'{res}/drawable-{dens}/ic_launcher_monochrome.png'); count += 1
+          for dens, px in legacy_sizes.items():
+              draw(px, 'legacy', 0.72).save(f'{res}/mipmap-{dens}/ic_launcher.png'); count += 1
+          for f in glob.glob(f'{res}/drawable*/splash.png'):
+              px = Image.open(f).size[0]
+              draw(px, 'fg', 0.80).save(f); count += 1
+          for f in glob.glob(f'{res}/drawable*/android12splash.png'):
+              px = Image.open(f).size[0]
+              draw(px, 'fg', 0.56).save(f); count += 1
+          print(f"Pictograma YouTube, antet 'Premium', cautare 'Caută în YouTube' ({count} imagini regenerate)")
+          PY
+
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
