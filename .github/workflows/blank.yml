@@ -986,6 +986,52 @@ jobs:
           print("Butoane: doar Like/Dislike/Doar audio/Distribuie/Descarca; bara de jos: Descarcari")
           PY
 
+      - name: Descarcare doar audio (M4A)
+        run: |
+          python3 - <<'PY'
+          def patch(path, old, new, count=1):
+              s = open(path, encoding='utf-8').read()
+              assert s.count(old) == count, f"Potrivire neasteptata ({s.count(old)}) in {path}: {old[:70]}"
+              open(path, 'w', encoding='utf-8').write(s.replace(old, new))
+
+          # --- Android: descarcarea doar a sunetului (height == 0 inseamna "doar audio") ---
+          k = 'android/app/src/main/kotlin/com/youpipe/app/DownloadWorker.kt'
+          patch(k, '        val out = File(dir, "$videoId.mp4")\n',
+                   '        val out = File(dir, if (maxHeight == 0) "$videoId.m4a" else "$videoId.mp4")\n')
+          patch(k,
+          """            val height: Int
+                      if (avc != null && aac != null && avc.height > (muxed?.height ?: 0)) {
+          """,
+          """            val height: Int
+                      if (maxHeight == 0) {
+                          // Audio only: the AAC (M4A) stream as it is, no video.
+                          val audio = aac ?: throw IllegalStateException("No audio stream")
+                          height = 0
+                          val total = audio.itagItem?.contentLength?.takeIf { it > 0 } ?: 0L
+                          fetch(audio.content, out) { done -> progress(done, total) }
+                      } else if (avc != null && aac != null && avc.height > (muxed?.height ?: 0)) {
+          """)
+
+          # --- Dart: optiunea "Doar audio" in fereastra de descarcare ---
+          d = 'lib/features/downloads/downloads.dart'
+          patch(d,
+          "              if (snap.hasError)\n                Padding(\n                  padding: const EdgeInsets.all(20),\n",
+          """              if (!snap.hasError)
+                          ListTile(
+                            leading: const Icon(Symbols.music_note, weight: 300),
+                            title: const Text('Doar audio (M4A)'),
+                            subtitle: const Text('Fără imagine, ocupă mult mai puțin spațiu'),
+                            onTap: () => Navigator.of(sheet).pop(0),
+                          ),
+                        if (snap.hasError)
+                          Padding(
+                            padding: const EdgeInsets.all(20),
+          """)
+          patch(d, "'${d.row.height}p · ${_size(d.row.sizeBytes)}',",
+                   "'${d.row.height == 0 ? 'Audio M4A' : '${d.row.height}p'} · ${_size(d.row.sizeBytes)}',")
+          print("Descarcare: alegi Video sau Doar audio (M4A)")
+          PY
+
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
