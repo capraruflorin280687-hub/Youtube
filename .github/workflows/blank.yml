@@ -1,4 +1,4 @@
-lname: Build YouPipe personalizat
+name: Build YouPipe personalizat
 on:
   push:
   workflow_dispatch:
