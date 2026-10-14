@@ -43,7 +43,6 @@ jobs:
               s = s.replace(old, new) if count == 0 else s.replace(old, new, count)
               open(path, 'w').write(s)
 
-          # 1) Bara de jos si rail-ul lateral: fara butonul Shorts
           p = 'lib/ui/shell/app_shell.dart'
           s = open(p).read()
           old = 'for (var i = 0; i < _navLabels.length; i++)'
@@ -51,25 +50,21 @@ jobs:
           s = s.replace(old, old + '\n                if (i != 1)')
           open(p, 'w').write(s)
 
-          # 2) Nicio intrare Shorts nu mai e citita din raspunsurile YouTube
           p = 'lib/innertube/parsers.dart'
           patch(p, 'YtItem? _shortsLockup(Json v) {\n', 'YtItem? _shortsLockup(Json v) {\n  return null;\n')
           patch(p, 'YtItem? _reelItem(Json v) {\n', 'YtItem? _reelItem(Json v) {\n  return null;\n')
           patch(p, "if (nav<Json>(f, ['searchFilterRenderer']) case final r?)",
                    "if (nav<Json>(f, ['searchFilterRenderer']) case final r? when textOf(r['label']) != 'Shorts')")
 
-          # 3) Home: fara raftul Shorts
           patch('lib/features/home/home_screen.dart',
                 "final shorts = ref.watch(homeShortsProvider).value ?? const <VideoItem>[];",
                 "final shorts = const <VideoItem>[];")
 
-          # 4) Abonamente: fara chip si fara raft Shorts
           p = 'lib/features/subscriptions/subscriptions_screen.dart'
           patch(p, "final shorts = _filter == _Filter.all ? filtered.where((v) => v.isShort).take(12).toList() : const <VideoItem>[];",
                    "final shorts = const <VideoItem>[];")
           patch(p, "for (final f in _Filter.values)", "for (final f in _Filter.values.where((x) => x != _Filter.shorts))")
 
-          # 5) Canale: fara tab Shorts
           patch('lib/features/channel/channel_screen.dart',
                 "{'Home', 'Videos', 'Shorts', 'Live',", "{'Home', 'Videos', 'Live',")
           print("Shorts eliminate")
@@ -252,7 +247,6 @@ jobs:
 
           open(p, 'w', encoding='utf-8').write(s)
 
-          # mod imersiv
           for path in ['lib/main.dart', p]:
               try:
                   t = open(path, encoding='utf-8').read()
@@ -287,18 +281,13 @@ jobs:
               print("Nu am gasit builder-ul din main.dart (sar peste)")
           PY
 
-      # ============================================================
-      # EFECT MAT PE BARA DE JOS (frosted glass)
-      # ============================================================
       - name: Bara de jos cu efect mat (frosted glass)
         continue-on-error: true
         run: |
           python3 - <<'PY'
-          import re
           p = 'lib/ui/shell/app_shell.dart'
           s = open(p, encoding='utf-8').read()
 
-          # 1) import pentru blur
           if "dart:ui" not in s:
               s = s.replace(
                   "import 'package:flutter/material.dart';",
@@ -306,7 +295,6 @@ jobs:
                   1,
               )
 
-          # 2) culoare mai transparenta pe bara de jos
           s = s.replace(
               "color: c.navBar.withValues(alpha: 0.4),",
               "color: c.navBar.withValues(alpha: 0.35),",
@@ -317,7 +305,6 @@ jobs:
                   "color: c.navBar.withValues(alpha: 0.35),",
               )
 
-          # 3) adaugam clasa _Frosted la final (daca nu exista)
           if "class _Frosted" not in s:
               s = s.rstrip() + '''
 
@@ -339,7 +326,7 @@ jobs:
           }
           '''
           open(p, 'w', encoding='utf-8').write(s)
-          print("Clasa _Frosted adaugata. ATENTIE: trebuie folosita explicit pe bara de jos pentru efect vizibil.")
+          print("Clasa _Frosted adaugata")
           PY
 
       - uses: actions/setup-java@v4
@@ -348,10 +335,10 @@ jobs:
           java-version: "17"
           cache: gradle
 
+      # ⬇️ AICI e cheia: channel master pentru Dart 3.13+
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
-          flutter-version: "3.35.0"
+          channel: master
           cache: true
 
       - run: flutter pub get
