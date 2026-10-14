@@ -941,6 +941,51 @@ jobs:
           print("Feed conectat: rezerva din abonamente + import automat; audio: serviciu mereu activ")
           PY
 
+      - name: Butoane sub video si tab Descarcari in bara de jos
+        run: |
+          python3 - <<'PY'
+          import re
+
+          def patch(path, old, new, count=1):
+              s = open(path, encoding='utf-8').read()
+              assert s.count(old) == count, f"Potrivire neasteptata ({s.count(old)}) in {path}: {old[:70]}"
+              open(path, 'w', encoding='utf-8').write(s.replace(old, new))
+
+          # 1) Sub videoclip raman doar: Like / Dislike / Doar audio / Distribuie / Descarca
+          w = 'lib/features/watch/watch_details.dart'
+          s = open(w, encoding='utf-8').read()
+          new = re.sub(
+              r"\n\s*PillButton\(icon: Symbols\.playlist_add, label: '[^']*', onTap: \(\) => showSaveToPlaylist\(context, ref, video\)\),"
+              r"\n\s*const SizedBox\(width: 8\),\n\s*PillButton\(\n\s*icon: Symbols\.schedule,.*?\n\s*\},\n\s*\),",
+              "", s, count=1, flags=re.S)
+          assert new != s, "Nu am gasit butoanele Salveaza / Vizioneaza mai tarziu"
+          open(w, 'w', encoding='utf-8').write(new)
+
+          # 2) Bara de jos: tab-ul "Descarcari" ia locul tab-ului Shorts (ascuns pana acum)
+          r = 'lib/ui/router.dart'
+          patch(r, "GoRoute(path: '/shorts', builder: (_, _) => const ShortsScreen(), routes: _detailRoutes())",
+                   "GoRoute(path: '/shorts', builder: (_, _) => const DownloadsScreen(), routes: _detailRoutes())")
+          s = open(r, encoding='utf-8').read()
+          s2 = re.sub(r"^(import [^\n]+\n)", r"\1import '../features/downloads/downloads.dart';\n", s, count=1, flags=re.M)
+          assert s2 != s
+          open(r, 'w', encoding='utf-8').write(s2)
+
+          app = 'lib/ui/shell/app_shell.dart'
+          patch(app, "const _navLabels = ['Acasă', 'Shorts', 'Abonamente', 'Tu'];",
+                     "const _navLabels = ['Acasă', 'Descărcări', 'Abonamente', 'Tu'];")
+          patch(app, "      1 => ShortsIcon(size: 26, filled: selected, color: c.textPrimary),\n",
+                     "      1 => Icon(Symbols.download, fill: selected ? 1 : 0, size: 26, weight: 300),\n")
+          patch(app, "\n                if (i != 1)", "", count=2)   # tab-ul nu mai este ascuns
+          patch(app, "final hideMini = (tab == 1 || DeviceInfo.current.tv) && !panelExpanded;",
+                     "final hideMini = DeviceInfo.current.tv && !panelExpanded;")   # mini playerul ramane vizibil
+
+          # 3) Ecranul de descarcari ca tab: fara sageata de inapoi cand nu e deschis ca pagina secundara
+          patch('lib/features/downloads/downloads.dart',
+                "        leading: IconButton(onPressed: () => context.pop(), icon: const Icon(Symbols.arrow_back)),\n",
+                "        leading: context.canPop() ? IconButton(onPressed: () => context.pop(), icon: const Icon(Symbols.arrow_back)) : null,\n")
+          print("Butoane: doar Like/Dislike/Doar audio/Distribuie/Descarca; bara de jos: Descarcari")
+          PY
+
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
