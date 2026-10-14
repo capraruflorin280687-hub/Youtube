@@ -329,16 +329,37 @@ jobs:
           print("Clasa _Frosted adaugata")
           PY
 
+      # ⬇️ FORȚĂM AGP 9.1.1 + Gradle 9.5.0 (compatibil cu Flutter master/beta)
+      - name: Forțează AGP 9.1.1 și Gradle 9.5.0
+        continue-on-error: true
+        run: |
+          # AGP 9.1.1 în settings.gradle (Kotlin DSL sau Groovy)
+          for f in android/settings.gradle android/settings.gradle.kts; do
+            if [ -f "$f" ]; then
+              sed -i 's/9\.1\.0/9.1.1/g' "$f"
+              echo "--- $f ---"
+              grep -n "com.android.application" "$f" || true
+            fi
+          done
+
+          # Gradle wrapper 9.5.0
+          WRAP=android/gradle/wrapper/gradle-wrapper.properties
+          if [ -f "$WRAP" ]; then
+            sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-9.5.0-all.zip|' "$WRAP"
+            echo "--- $WRAP ---"
+            cat "$WRAP"
+          fi
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
           cache: gradle
 
-      # ⬇️ AICI e cheia: channel master pentru Dart 3.13+
+      # ⬇️ Beta = mai nou decât stable (are Dart 3.13+), mai vechi decât master (acceptă AGP proiect)
       - uses: subosito/flutter-action@v2
         with:
-          channel: master
+          channel: beta
           cache: true
 
       - run: flutter pub get
