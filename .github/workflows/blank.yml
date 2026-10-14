@@ -883,6 +883,64 @@ jobs:
           print("Doar audio: trece la urmatoarea melodie la sfarsit")
           PY
 
+      - name: Feed conectat - rezerva din abonamente; audio mereu activ
+        run: |
+          python3 - <<'PY'
+          def patch(path, old, new, count=1):
+              s = open(path, encoding='utf-8').read()
+              assert s.count(old) == count, f"Potrivire neasteptata ({s.count(old)}) in {path}: {old[:70]}"
+              open(path, 'w', encoding='utf-8').write(s.replace(old, new))
+
+          # 1) Conectat, dar feed-ul contului vine gol: se folosesc videoclipurile abonamentelor de pe dispozitiv
+          patch('lib/data/home_feed.dart',
+          "    if (chip == HomeChip.romanian && yt.signedIn && sources.every((s) => s.done && s._buffer.isEmpty)) {\n      final fallback = _SearchSource(",
+          """    if (chip == HomeChip.romanian && yt.signedIn && sources.every((s) => s.done && s._buffer.isEmpty)) {
+                // The account feed came back empty: use the latest uploads of the subscriptions kept on this device.
+                final local = [
+                  for (final f in subscriptionFeed)
+                    if (!f.video.isShort && !finished.contains(f.video.id)) f,
+                ]..sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
+                if (local.isNotEmpty) {
+                  final source = _ListSource([for (final f in local.take(150)) f.video]);
+                  sources.add(source);
+                  await source.ensure();
+                }
+              }
+              if (chip == HomeChip.romanian && yt.signedIn && sources.every((s) => s.done && s._buffer.isEmpty)) {
+                final fallback = _SearchSource(""")
+
+          # 2) Conectat si fara abonamente pe dispozitiv: se aduc o data din contul Google
+          patch('lib/providers.dart',
+          "    unawaited(subs.refresh());\n    final mixer = await HomeMixer.create(\n",
+          """    unawaited(subs.refresh());
+              // Signed in but nothing subscribed on this device yet: bring the account's subscriptions over.
+              if (chip == HomeChip.romanian && yt.signedIn && (await subs.watch().first).isEmpty) {
+                try {
+                  var page = await yt.subscribedChannels();
+                  final channels = <ChannelItem>[...page.entries.allItems.whereType<ChannelItem>()];
+                  while (page.continuation != null && channels.length < 2000) {
+                    page = await yt.browseContinuation(page.continuation!);
+                    final more = page.entries.allItems.whereType<ChannelItem>().toList();
+                    if (more.isEmpty) break;
+                    channels.addAll(more);
+                  }
+                  if (channels.isNotEmpty) {
+                    await ref.read(libraryProvider).importSubscriptions(channels);
+                    await subs.refresh(force: true).timeout(const Duration(seconds: 30));
+                  }
+                } catch (e) {
+                  debugPrint('YouPipe: account subscriptions import failed: $e');
+                }
+              }
+              final mixer = await HomeMixer.create(
+          """)
+
+          # 3) Audio: serviciul ramane pornit cand playerul e pus pe pauza (nu mai e oprit de sistem cu ecranul stins)
+          patch('lib/main.dart', "        androidNotificationOngoing: true,\n        androidStopForegroundOnPause: true,\n",
+                                 "        androidNotificationOngoing: false,\n        androidStopForegroundOnPause: false,\n")
+          print("Feed conectat: rezerva din abonamente + import automat; audio: serviciu mereu activ")
+          PY
+
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
@@ -896,7 +954,7 @@ jobs:
           cache: true
 
       - run: flutter pub get
-      - name: Buffer ExoPlayer mai mare
+      - name: Buffer ExoPlayer mai mare si wake lock
         run: |
           python3 - <<'PY'
           import glob, os
@@ -908,7 +966,9 @@ jobs:
               s = open(f, encoding='utf-8').read()
               if 'ExoPlayer.Builder(' not in s or 'setLoadControl' in s:
                   continue
-              pkg = 'androidx.media3.exoplayer' if 'androidx.media3' in s else 'com.google.android.exoplayer2'
+              media3 = 'androidx.media3' in s
+              pkg = 'androidx.media3.exoplayer' if media3 else 'com.google.android.exoplayer2'
+              cpkg = 'androidx.media3.common' if media3 else 'com.google.android.exoplayer2'
               i = s.index('ExoPlayer.Builder(')
               j = i + len('ExoPlayer.Builder(')
               depth = 1
@@ -919,15 +979,17 @@ jobs:
                   j += 1
               lc = (".setLoadControl(new " + pkg + ".DefaultLoadControl.Builder()"
                     ".setBufferDurationsMs(30000, 90000, 1000, 2500)"
-                    ".setPrioritizeTimeOverSizeThresholds(true).build())")
+                    ".setPrioritizeTimeOverSizeThresholds(true).build())"
+                    # Tine procesorul si Wi-Fi-ul active cu ecranul stins, ca redarea sa nu se opreasca in fundal
+                    ".setWakeMode(" + cpkg + ".C.WAKE_MODE_NETWORK)")
               s = s[:j] + lc + s[j:]
               open(f, 'w', encoding='utf-8').write(s)
               patched += 1
-              print('Buffer marit in', f)
+              print('Buffer marit + wake lock in', f)
           if not patched:
               print('ATENTIE: nu am gasit ExoPlayer.Builder in video_player_android; bufferul ramane implicit')
           else:
-              print('Buffer ExoPlayer: porneste dupa 1 s, tine pana la 90 s in avans')
+              print('Buffer ExoPlayer: porneste dupa 1 s, tine pana la 90 s in avans; Wi-Fi/CPU active cu ecranul stins')
           PY
 
       - run: flutter build apk --release --split-per-abi
