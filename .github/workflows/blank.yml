@@ -843,129 +843,44 @@ jobs:
           print("Buton Doar audio adaugat")
           PY
 
-      - name: Aspect YouTube - pictograma, antet Premium, cautare
+      - name: Bara de cautare Cauta in YouTube
         run: |
           python3 - <<'PY'
-          import glob, math, struct, zlib
-
-          def patch(path, old, new, count=1):
-              s = open(path, encoding='utf-8').read()
-              assert s.count(old) == count, f"Potrivire neasteptata ({s.count(old)}) in {path}: {old[:70]}"
-              open(path, 'w', encoding='utf-8').write(s.replace(old, new))
-
-          # --- 1) Sigla din antet: buton rosu de redare + textul "Premium" ---
-          open('assets/branding/logo.svg', 'w', encoding='utf-8').write(
-              '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 70" width="100" height="70">\n'
-              '  <rect width="100" height="70" rx="20" fill="#FF0000"/>\n'
-              '  <path d="M40 20 L40 50 L66 35 Z" fill="#FFFFFF"/>\n'
-              '</svg>\n')
-          patch('lib/ui/widgets/common.dart',
-                "      SvgPicture.asset('assets/branding/logo.svg', height: height * 1.45),\n    ],",
-                "      SvgPicture.asset('assets/branding/logo.svg', height: height * 1.45),\n"
-                "      const SizedBox(width: 5),\n"
-                "      Text('Premium', style: TextStyle(fontSize: height, fontWeight: FontWeight.w800, letterSpacing: -1.2, height: 1)),\n"
-                "    ],")
-
-          # --- 2) Bara de cautare: "Cauta in YouTube" ---
           sp = 'lib/features/search/search_screen.dart'
           s = open(sp, encoding='utf-8').read()
           for old in ("Caută în YouPipe", "Search YouPipe"):
               s = s.replace("'" + old + "'", "'Caută în YouTube'")
           assert "YouPipe" not in s.split("hintText")[1][:80], "Textul din bara de cautare nu a fost schimbat"
           open(sp, 'w', encoding='utf-8').write(s)
+          print("Bara de cautare: Caută în YouTube")
+          PY
 
-          # --- 3) Pictograma aplicatiei + ecranul de pornire (PNG-uri desenate fara biblioteci externe) ---
-          def write_png(path, size, rows):
-              def chunk(tag, data):
-                  return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data) & 0xFFFFFFFF)
-              raw = b''.join(b'\x00' + bytes(r) for r in rows)
-              with open(path, 'wb') as f:
-                  f.write(b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 6, 0, 0, 0))
-                          + chunk(b'IDAT', zlib.compress(raw, 6)) + chunk(b'IEND', b''))
+      - name: Doar audio trece la urmatoarea melodie
+        run: |
+          python3 - <<'PY'
+          def patch(path, old, new, count=1):
+              s = open(path, encoding='utf-8').read()
+              assert s.count(old) == count, f"Potrivire neasteptata ({s.count(old)}) in {path}: {old[:70]}"
+              open(path, 'w', encoding='utf-8').write(s.replace(old, new))
 
-          def clamp(v):
-              return 0.0 if v < 0 else 1.0 if v > 1 else v
-
-          def render(size, mode, scale):
-              S = float(size)
-              w = S * scale
-              h = w * 0.70
-              x0, y0 = (S - w) / 2, (S - h) / 2
-              r = h * 0.28
-              cx, cy, hw, hh = S / 2, S / 2, w / 2, h / 2
-              tri = [(x0 + w * 0.40, y0 + h * 0.28), (x0 + w * 0.40, y0 + h * 0.72), (x0 + w * 0.66, y0 + h * 0.50)]
-              tcx = sum(p[0] for p in tri) / 3
-              tcy = sum(p[1] for p in tri) / 3
-              edges = []
-              for i in range(3):
-                  ax, ay = tri[i]
-                  bx, by = tri[(i + 1) % 3]
-                  ex, ey = bx - ax, by - ay
-                  ln = math.hypot(ex, ey)
-                  nx, ny = ey / ln, -ex / ln
-                  if (tcx - ax) * nx + (tcy - ay) * ny < 0:
-                      nx, ny = -nx, -ny
-                  edges.append((ax, ay, nx, ny))
-              legacy_r = S * 0.22
-              rows = []
-              blank = bytes(size * 4)
-              for py in range(size):
-                  y = py + 0.5
-                  if mode != 'legacy' and (y < y0 - 2 or y > y0 + h + 2):
-                      rows.append(blank)
-                      continue
-                  row = bytearray()
-                  for px in range(size):
-                      x = px + 0.5
-                      qx = abs(x - cx) - (hw - r)
-                      qy = abs(y - cy) - (hh - r)
-                      sd = math.hypot(max(qx, 0.0), max(qy, 0.0)) + min(max(qx, qy), 0.0) - r
-                      rect = clamp(0.5 - sd)
-                      tri_cov = clamp(0.5 + min((x - ax) * nx + (y - ay) * ny for ax, ay, nx, ny in edges))
-                      if mode == 'mono':
-                          row += bytes((0, 0, 0, int(255 * rect * (1 - tri_cov) + 0.5)))
-                      elif mode == 'fg':
-                          g = int(255 * tri_cov + 0.5)
-                          row += bytes((255, g, g, int(255 * rect + 0.5)))
-                      else:  # legacy: patrat alb rotunjit cu butonul rosu
-                          bq = max(abs(x - cx), abs(y - cy)) - (S / 2 - legacy_r)
-                          bx_, by_ = abs(x - cx) - (S / 2 - legacy_r), abs(y - cy) - (S / 2 - legacy_r)
-                          bsd = math.hypot(max(bx_, 0.0), max(by_, 0.0)) + min(max(bx_, by_), 0.0) - legacy_r
-                          bg = clamp(0.5 - bsd)
-                          g = int(255 * (1 - rect + rect * tri_cov) + 0.5)
-                          row += bytes((255, g, g, int(255 * bg + 0.5)))
-                  rows.append(row)
-              return rows
-
-          res = 'android/app/src/main/res'
-          cache = {}
-          def save(path, size, mode, scale):
-              key = (size, mode, scale)
-              if key not in cache:
-                  cache[key] = render(size, mode, scale)
-              write_png(path, size, cache[key])
-
-          fg_sizes = {'mdpi': 108, 'hdpi': 162, 'xhdpi': 216, 'xxhdpi': 324, 'xxxhdpi': 432}
-          legacy_sizes = {'mdpi': 48, 'hdpi': 72, 'xhdpi': 96, 'xxhdpi': 144, 'xxxhdpi': 192}
-          count = 0
-          for dens, px in fg_sizes.items():
-              save(f'{res}/drawable-{dens}/ic_launcher_foreground.png', px, 'fg', 0.58)
-              save(f'{res}/drawable-{dens}/ic_launcher_monochrome.png', px, 'mono', 0.58)
-              count += 2
-          for dens, px in legacy_sizes.items():
-              save(f'{res}/mipmap-{dens}/ic_launcher.png', px, 'legacy', 0.72)
-              count += 1
-          for f in glob.glob(f'{res}/drawable*/splash.png'):
-              with open(f, 'rb') as fh:
-                  px = struct.unpack('>I', fh.read(24)[16:20])[0]
-              save(f, px, 'fg', 0.80)
-              count += 1
-          for f in glob.glob(f'{res}/drawable*/android12splash.png'):
-              with open(f, 'rb') as fh:
-                  px = struct.unpack('>I', fh.read(24)[16:20])[0]
-              save(f, px, 'fg', 0.56)
-              count += 1
-          print(f"Pictograma YouTube, antet 'Premium', cautare 'Caută în YouTube' ({count} imagini regenerate)")
+          svc = 'lib/player/video_player_service.dart'
+          patch(svc, "      var finished = false;\n", "      var finished = false;\n      var audioDone = false;\n")
+          patch(svc, "        // A stream that fails mid-play (an expired or rejected URL, a stall, or the network dropping, often with the\n",
+          """        // Audio-only: the end of the stream isn't always reported as "completed" (the player may stall, or fail on the
+                  // last bytes), so near the end any of those counts as finished and autoplay moves on.
+                  if (audioOnly.value && !audioDone && !v.isLooping) {
+                    final total = v.duration > Duration.zero ? v.duration : i.duration;
+                    final nearEnd = total > Duration.zero && lastPosition + const Duration(milliseconds: 1500) >= total;
+                    if (nearEnd && (v.hasError || v.isCompleted || !v.isPlaying || v.isBuffering)) {
+                      audioDone = true;
+                      finished = true;
+                      _completed.add(id);
+                      return;
+                    }
+                  }
+                  // A stream that fails mid-play (an expired or rejected URL, a stall, or the network dropping, often with the
+          """)
+          print("Doar audio: trece la urmatoarea melodie la sfarsit")
           PY
 
       - uses: actions/setup-java@v6
