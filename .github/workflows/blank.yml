@@ -1233,9 +1233,6 @@ jobs:
           patch('lib/features/watch/player_view.dart',
                 "              const VideoSurface(),\n              if (c != null && c.value.isInitialized)\n                CaptionOverlay(",
                 "              VideoSurface(fit: widget.fullscreen ? BoxFit.contain : BoxFit.cover),\n              if (c != null && c.value.isInitialized)\n                CaptionOverlay(")
-          patch('lib/ui/shell/app_shell.dart',
-                "                    : const VideoSurface(),\n              ),\n            ),\n          ),\n        ),\n      ],\n    );\n  }\n}\n",
-                "                    : const VideoSurface(fit: BoxFit.cover),\n              ),\n            ),\n          ),\n        ),\n      ],\n    );\n  }\n}\n")
 
           # --- 2) Rotesti telefonul cand ruleaza un video -> fullscreen; il rotesti inapoi -> iese din fullscreen ---
           app = 'lib/ui/shell/app_shell.dart'
@@ -1406,8 +1403,7 @@ jobs:
 
           // Zoom ----------------------------------------------------------------------------------------------------------
 
-          /// How the video fills the player: auto (Implicit: fills the small player, whole picture in fullscreen), width,
-          /// height, either (whole picture), stretch.
+          /// How the video fills the player: auto (Implicit: the plain picture, no zoom), width, height, either, stretch.
           final videoFitProvider = NotifierProvider<VideoFitController, String>(VideoFitController.new);
 
           class VideoFitController extends Notifier<String> {
@@ -1433,7 +1429,7 @@ jobs:
             'height' => BoxFit.fitHeight,
             'either' => BoxFit.contain,
             'stretch' => BoxFit.fill,
-            _ => fullscreen ? BoxFit.contain : BoxFit.cover,
+            _ => BoxFit.contain,
           };
 
           String _fitLabel(String mode) => switch (_normFit(mode)) {
