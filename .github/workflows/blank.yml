@@ -1167,6 +1167,24 @@ jobs:
           print("Poza contului apare in bara de jos cand esti conectat")
           PY
 
+      - name: Player mai inalt cu 1 cm
+        run: |
+          python3 - <<'PY'
+          def patch(path, old, new, count=1):
+              s = open(path, encoding='utf-8').read()
+              assert s.count(old) == count, f"Potrivire neasteptata ({s.count(old)}) in {path}: {old[:70]}"
+              open(path, 'w', encoding='utf-8').write(s.replace(old, new))
+
+          app = 'lib/ui/shell/app_shell.dart'
+          # Playerul (pe telefon) este mai inalt cu 64 px logici (~1 cm); marginea de sus ramane pe loc, creste in jos
+          patch(app, "final full = Rect.fromLTWH(0, media.padding.top, videoW, videoW * 9 / 16);",
+                     "final full = Rect.fromLTWH(0, media.padding.top, videoW, videoW * 9 / 16 + (wide ? 0.0 : 64.0));")
+          # Detaliile (titlu, butoane, videoclipuri similare) pornesc sub playerul mai inalt
+          patch(app, "    final videoH = videoW * 9 / 16;\n",
+                     "    final videoH = videoW * 9 / 16 + (wide ? 0.0 : 64.0);\n")
+          print("Playerul este mai inalt cu ~1 cm (in jos)")
+          PY
+
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
