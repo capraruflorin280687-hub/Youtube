@@ -1307,6 +1307,74 @@ jobs:
           print("Video umple playerul; rotirea telefonului intra/iese din fullscreen")
           PY
 
+      - name: Video normal chiar daca ai descarcat doar audio
+        run: |
+          python3 - <<'PY'
+          import re
+
+          def patch(path, old, new, count=1):
+              s = open(path, encoding='utf-8').read()
+              assert s.count(old) == count, f"Potrivire neasteptata ({s.count(old)}) in {path}: {old[:70]}"
+              open(path, 'w', encoding='utf-8').write(s.replace(old, new))
+
+          d = 'lib/features/downloads/downloads.dart'
+
+          # 1) Fisierul audio salvat se reda doar cand il alegi din lista Descarcari; in rest videoclipul se reda normal
+          patch(d, "  LocalVideo? localVideo(String videoId) => _local[videoId];\n",
+          """  String? _audioWanted;
+            DateTime _audioWantedUntil = DateTime(0);
+
+            /// Called when an audio download is picked in the Downloads list: its saved file may play for the next few seconds.
+            void wantAudio(String videoId) {
+              _audioWanted = videoId;
+              _audioWantedUntil = DateTime.now().add(const Duration(seconds: 15));
+            }
+
+            LocalVideo? localVideo(String videoId) {
+              final v = _local[videoId];
+              if (v == null) return null;
+              // An audio-only download (.m4a) plays only when picked in the Downloads list; anywhere else the video streams.
+              if (v.path.endsWith('.m4a') && !(videoId == _audioWanted && DateTime.now().isBefore(_audioWantedUntil))) {
+                return null;
+              }
+              return v;
+            }
+          """)
+          patch(d, "                            DownloadState.done => null,\n                            DownloadState.failed => () => _retry(ref, d),\n",
+          """                            DownloadState.done =>
+                                        d.row.path?.endsWith('.m4a') == true
+                                            ? () {
+                                                ref.read(downloadManagerProvider).wantAudio(d.video.id);
+                                                playVideo(context, ref, d.video);
+                                              }
+                                            : null,
+                                      DownloadState.failed => () => _retry(ref, d),
+          """)
+
+          # 2) Daca ai doar audio pentru un video, butonul Descarca iti lasa sa descarci si video-ul
+          patch(d, "  if (existing != null) {\n    await _showManage(context, ref, existing);\n    return;\n  }\n",
+                   "  if (existing != null && !(existing.row.state == DownloadState.done && existing.row.height == 0)) {\n"
+                   "    await _showManage(context, ref, existing);\n    return;\n  }\n")
+          s = open(d, encoding='utf-8').read()
+          new = re.sub(r"DownloadState\.done => \(Symbols\.download_done, '([^']*)'\),",
+                       lambda m: "DownloadState.done => d!.row.height == 0\n        ? (Symbols.music_note, 'Audio')\n        : (Symbols.download_done, '" + m.group(1) + "'),", s, count=1)
+          assert new != s
+          open(d, 'w', encoding='utf-8').write(new)
+          patch(d, "    filledIcon: d?.row.state == DownloadState.done,\n",
+                   "    filledIcon: d?.row.state == DownloadState.done && d?.row.height != 0,\n")
+
+          # 3) Un video nou inlocuieste fisierul vechi (audio sau video) din folderul privat
+          patch(d, "  Future<void> start(VideoItem video, int height) async {\n",
+          """  Future<void> start(VideoItem video, int height) async {
+              final old = await (_db.select(_db.downloads)..where((x) => x.videoId.equals(video.id))).getSingleOrNull();
+              if (old?.path != null) {
+                final f = File(old!.path!);
+                if (f.existsSync()) await f.delete();
+              }
+          """)
+          print("Audio salvat: se reda doar din lista Descarcari; video-ul se reda normal")
+          PY
+
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
