@@ -1221,6 +1221,92 @@ jobs:
           print("Feed neconectat: tine cont de cautari si istoric")
           PY
 
+      - name: Video pe toata suprafata si fullscreen la rotire
+        run: |
+          python3 - <<'PY'
+          def patch(path, old, new, count=1):
+              s = open(path, encoding='utf-8').read()
+              assert s.count(old) == count, f"Potrivire neasteptata ({s.count(old)}) in {path}: {old[:70]}"
+              open(path, 'w', encoding='utf-8').write(s.replace(old, new))
+
+          # --- 1) Video-ul umple tot playerul (fara benzi sus/jos); in fullscreen ramane intreg ---
+          patch('lib/features/watch/player_view.dart',
+                "              const VideoSurface(),\n              if (c != null && c.value.isInitialized)\n                CaptionOverlay(",
+                "              VideoSurface(fit: widget.fullscreen ? BoxFit.contain : BoxFit.cover),\n              if (c != null && c.value.isInitialized)\n                CaptionOverlay(")
+          patch('lib/ui/shell/app_shell.dart',
+                "                    : const VideoSurface(),\n              ),\n            ),\n          ),\n        ),\n      ],\n    );\n  }\n}\n",
+                "                    : const VideoSurface(fit: BoxFit.cover),\n              ),\n            ),\n          ),\n        ),\n      ],\n    );\n  }\n}\n")
+
+          # --- 2) Rotesti telefonul cand ruleaza un video -> fullscreen; il rotesti inapoi -> iese din fullscreen ---
+          app = 'lib/ui/shell/app_shell.dart'
+          three = "const [DeviceOrientation.portraitUp, DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]"
+
+          # a) cat timp pagina video e deschisa, telefonul poate fi rotit (respecta blocarea rotirii din sistem)
+          patch(app, "    ref.listen(playerPanelProvider, (_, expanded) {\n",
+          f"""    ref.listen(playerPanelProvider, (_, expanded) {{
+                if (formFactorOf(context) == FormFactor.phone && !ref.read(fullscreenProvider)) {{
+                  unawaited(
+                    SystemChrome.setPreferredOrientations(expanded ? {three} : appOrientations(FormFactor.phone)),
+                  );
+                }}
+          """)
+
+          # b) detectarea rotirii (la fiecare schimbare de orientare)
+          patch(app, "    ref.listen(fullscreenProvider, (_, on) => _setFullscreen(on));\n",
+          """    ref.listen(fullscreenProvider, (_, on) => _setFullscreen(on));
+              final landscapeNow = MediaQuery.orientationOf(context) == Orientation.landscape;
+              if (landscapeNow != _wasLandscape) {
+                _wasLandscape = landscapeNow;
+                WidgetsBinding.instance.addPostFrameCallback((_) => _onRotated(landscapeNow));
+              }
+          """)
+
+          # c) logica fullscreen automat + stare
+          patch(app, "  Future<void> _setFullscreen(bool on) async {\n",
+          f"""  bool _wasLandscape = false;
+            bool _autoFs = false; // fullscreen entered by rotating the phone
+            bool _autoExit = false; // fullscreen left by rotating back
+
+            void _onRotated(bool landscape) {{
+              if (!mounted || formFactorOf(context) != FormFactor.phone) return;
+              final fullscreen = ref.read(fullscreenProvider);
+              final watching = ref.read(playerPanelProvider) && ref.read(playbackProvider) != null;
+              if (landscape && watching && !fullscreen) {{
+                _autoFs = true;
+                ref.read(fullscreenProvider.notifier).set(true);
+              }} else if (!landscape && fullscreen && _autoFs) {{
+                _autoFs = false;
+                _autoExit = true;
+                ref.read(fullscreenProvider.notifier).set(false);
+              }}
+            }}
+
+            Future<void> _setFullscreen(bool on) async {{
+          """)
+          patch(app, "      if (form != FormFactor.tv) await sensorLandscape();\n",
+          f"""      if (form != FormFactor.tv) {{
+                  // Entered by rotating: keep following the sensor, so turning back leaves fullscreen.
+                  if (_autoFs) {{
+                    await SystemChrome.setPreferredOrientations({three});
+                  }} else {{
+                    await sensorLandscape();
+                  }}
+                }}
+          """)
+          patch(app, "      await SystemChrome.setPreferredOrientations(appOrientations(form));\n",
+          f"""      final keepRotating = _autoExit;
+                _autoExit = false;
+                _autoFs = false;
+                final open = ref.read(playerPanelProvider);
+                await SystemChrome.setPreferredOrientations(
+                  form == FormFactor.phone && open
+                      ? (keepRotating ? {three} : const [DeviceOrientation.portraitUp])
+                      : appOrientations(form),
+                );
+          """)
+          print("Video umple playerul; rotirea telefonului intra/iese din fullscreen")
+          PY
+
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
