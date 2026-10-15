@@ -1375,6 +1375,121 @@ jobs:
           print("Audio salvat: se reda doar din lista Descarcari; video-ul se reda normal")
           PY
 
+      - name: Setare intindere imagine in player
+        run: |
+          python3 - <<'PY'
+          def patch(path, old, new, count=1):
+              s = open(path, encoding='utf-8').read()
+              assert s.count(old) == count, f"Potrivire neasteptata ({s.count(old)}) in {path}: {old[:70]}"
+              open(path, 'w', encoding='utf-8').write(s.replace(old, new))
+
+          ps = 'lib/features/watch/player_settings.dart'
+
+          # 1) Randul "Zoom" in setarile playerului
+          patch(ps, "            SwitchListTile(\n              secondary: const Icon(Symbols.repeat, weight: 300),\n",
+          """            _SettingTile(
+                        icon: Symbols.fit_screen,
+                        label: 'Zoom',
+                        value: _fitLabel(ref.watch(videoFitProvider)),
+                        onTap: () {
+                          Navigator.of(sheet).pop();
+                          _showFit(context, ref);
+                        },
+                      ),
+                      SwitchListTile(
+                        secondary: const Icon(Symbols.repeat, weight: 300),
+          """)
+
+          # 2) Setarea (salvata pe dispozitiv) + fereastra "Zoom video" cu 5 optiuni
+          s = open(ps, encoding='utf-8').read()
+          s += """
+
+          // Zoom ----------------------------------------------------------------------------------------------------------
+
+          /// How the video fills the player: auto (Implicit: fills the small player, whole picture in fullscreen), width,
+          /// height, either (whole picture), stretch.
+          final videoFitProvider = NotifierProvider<VideoFitController, String>(VideoFitController.new);
+
+          class VideoFitController extends Notifier<String> {
+            @override
+            String build() => _normFit(ref.read(prefsProvider).getString('videoFit') ?? 'auto');
+
+            Future<void> set(String mode) async {
+              state = mode;
+              await ref.read(prefsProvider).setString('videoFit', mode);
+            }
+          }
+
+          String _normFit(String m) => switch (m) {
+            'contain' => 'either',
+            'cover' => 'height',
+            'fill' => 'stretch',
+            'width' || 'height' || 'either' || 'stretch' => m,
+            _ => 'auto',
+          };
+
+          BoxFit videoFitFor(String mode, bool fullscreen) => switch (mode) {
+            'width' => BoxFit.fitWidth,
+            'height' => BoxFit.fitHeight,
+            'either' => BoxFit.contain,
+            'stretch' => BoxFit.fill,
+            _ => fullscreen ? BoxFit.contain : BoxFit.cover,
+          };
+
+          String _fitLabel(String mode) => switch (_normFit(mode)) {
+            'width' => 'Potrivire lățime',
+            'height' => 'Potrivire înălțime',
+            'either' => 'Potrivire fie lățime, fie înălțime',
+            'stretch' => 'Întinde',
+            _ => 'Implicit',
+          };
+
+          void _showFit(BuildContext context, WidgetRef ref) {
+            showModalBottomSheet<void>(
+              context: context,
+              useRootNavigator: true,
+              isScrollControlled: true,
+              builder: (sheet) => Consumer(
+                builder: (sheet, ref, _) {
+                  final current = _normFit(ref.watch(videoFitProvider));
+                  return SafeArea(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Padding(
+                          padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+                          child: Text('Zoom video', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+                        ),
+                        for (final mode in const ['auto', 'width', 'height', 'either', 'stretch'])
+                          ListTile(
+                            title: Text(_fitLabel(mode), style: const TextStyle(fontSize: 17)),
+                            trailing: Icon(
+                              current == mode ? Symbols.radio_button_checked : Symbols.radio_button_unchecked,
+                              weight: 300,
+                            ),
+                            onTap: () {
+                              ref.read(videoFitProvider.notifier).set(mode);
+                              Navigator.of(sheet).pop();
+                            },
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            );
+          }
+          """
+          open(ps, 'w', encoding='utf-8').write(s)
+
+          # 3) Playerul foloseste alegerea
+          patch('lib/features/watch/player_view.dart',
+                "              VideoSurface(fit: widget.fullscreen ? BoxFit.contain : BoxFit.cover),\n",
+                "              VideoSurface(fit: videoFitFor(ref.watch(videoFitProvider), widget.fullscreen)),\n")
+          print("Setare in player: Zoom video (Implicit / Potrivire latime / Potrivire inaltime / Fie-fie / Intinde)")
+          PY
+
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
